@@ -3,10 +3,17 @@ Theory + practice for using RabbitMQ
 
 
 ## Navigation
+
 - [example_0. Upload one and multiple files synchronously and asynchronously](file-upload):
 ```bash
 poetry run fastapi dev file-upload/api.py
 ```
+
+- [example_1. Different ways to run a synchonous CPU-bound task in the async code without blocking the event loop](fastapi-threadpool-executor):
+```bash
+poetry run fastapi dev fastapi-threadpool-executor/api.py
+```
+
 
 
 
