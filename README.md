@@ -41,6 +41,11 @@ poetry run fastapi dev file-upload/api.py
 
 * In case you had to upload a rather large file that wouldn't fit into your client's RAM (if, for instance, you had 2 GB available RAM on the client's device and attempted to load a 4 GB file), you should rather use a streaming upload on client side as well, which would allow you to send large streams or files without reading them into memory (might take a bit more time to upload though, depending on the chunk size, which you may customize by reading the file in chunks instead and setting the chunk size as desired)
 
+* To run tasks in the background, without waiting for them to complete, in order to proceed with executing the rest of the code in an endpoint, you could use FastAPI's `BackgroundTasks`, as shown here and here. If the background task function is defined with `async def`, FastAPI will run it directly in the event loop, whereas if it is defined with normal `def`, FastAPI will use `run_in_threadpool()` and `await` the returned coroutine (same concept as API endpoints). 
+
+* Another option when you need to run an `async def` function in the background, but not necessarily having it trigerred after returning a FastAPI response (which is the case in BackgroundTasks), is to use `asyncio.create_task()`.
+
+
 
 
 
