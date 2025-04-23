@@ -52,6 +52,9 @@ poetry run fastapi dev fastapi-threadpool-executor/api.py
 
 * Another option when you need to run an `async def` function in the background, but not necessarily having it trigerred after returning a FastAPI response (which is the case in BackgroundTasks), is to use `asyncio.create_task()`.
 
+* It is important to limit the number of worker threads in the thread pools to the number of asynchronous tasks you wish to complete, based on the resources in your system, or on the number of resources you intend to use within your tasks.
+
+* The number of worker threads in the `ThreadPoolExecutor` is not related to the number of CPUs or CPU cores in your system. You can configure the number of threads based on the number of tasks you need to execute.
 
 
 
@@ -61,3 +64,4 @@ poetry run fastapi dev fastapi-threadpool-executor/api.py
 - [StackOverflow. How to Upload File using FastAPI?](https://stackoverflow.com/questions/63048825/how-to-upload-file-using-fastapi)
 - [StackOverflow. FastAPI UploadFile is slow compared to Flask](https://stackoverflow.com/questions/65342833/fastapi-uploadfile-is-slow-compared-to-flask/70667530#70667530)
 - [StackOverflow. Conurrency and Parallelism in FastAPI](https://stackoverflow.com/questions/71516140/fastapi-runs-api-calls-in-serial-instead-of-parallel-fashion/71517830#71517830)
+- [StackOverflow. Performance results differ between run_in_threadpool() and run_in_executor() in FastAPI](https://stackoverflow.com/questions/77935269/performance-results-differ-between-run-in-threadpool-and-run-in-executor-in/77941425#77941425)
