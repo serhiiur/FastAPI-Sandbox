@@ -14,6 +14,10 @@ poetry run fastapi dev file-upload/api.py
 poetry run fastapi dev fastapi-threadpool-executor/api.py
 ```
 
+- [example_2. Example of protecting routes in FastAPI](fastapi-protected-routes):
+```bash
+poetry run fastapi dev fastapi-protected-routes/api.py
+```
 
 
 
