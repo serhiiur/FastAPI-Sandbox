@@ -9,7 +9,7 @@ Theory + practice for using RabbitMQ
 poetry run fastapi dev file-upload/api.py
 ```
 
-- [example_1. Different ways to run a synchonous CPU-bound task in the async code without blocking the event loop](fastapi-threadpool-executor):
+- [example_1. Example of running blocking synchonous functions in the custom and Starlette's Thread Pool Executor](fastapi-threadpool-executor):
 ```bash
 poetry run fastapi dev fastapi-threadpool-executor/api.py
 ```
@@ -17,6 +17,11 @@ poetry run fastapi dev fastapi-threadpool-executor/api.py
 - [example_2. Example of protecting routes in FastAPI](fastapi-protected-routes):
 ```bash
 poetry run fastapi dev fastapi-protected-routes/api.py
+```
+
+- [example_3. Example of monitoring a basic FastAPI app with cAdvisor](fastapi-docker-cAdvisor):
+```bash
+dc -f fastapi-docker-cAdvisor/docker-compose.yml up
 ```
 
 
@@ -69,3 +74,7 @@ poetry run fastapi dev fastapi-protected-routes/api.py
 - [StackOverflow. FastAPI UploadFile is slow compared to Flask](https://stackoverflow.com/questions/65342833/fastapi-uploadfile-is-slow-compared-to-flask/70667530#70667530)
 - [StackOverflow. Conurrency and Parallelism in FastAPI](https://stackoverflow.com/questions/71516140/fastapi-runs-api-calls-in-serial-instead-of-parallel-fashion/71517830#71517830)
 - [StackOverflow. Performance results differ between run_in_threadpool() and run_in_executor() in FastAPI](https://stackoverflow.com/questions/77935269/performance-results-differ-between-run-in-threadpool-and-run-in-executor-in/77941425#77941425)
+- [Github. Datamodel Code Generator](https://github.com/koxudaxi/datamodel-code-generator)
+- [Github. RichAPI is designed to simplify FastAPI projects by automatically generating documented HTTP responses from HTTPException without extra effort](https://github.com//ManiMozaffar/richapi)
+- [Github. Generate a mypy- and IDE-friendly API client from an OpenAPI spec.](https://github.com/dmontagu/fastapi_client)
+- [Github. API versioning for fastapi web applications](https://github.com/DeanWay/fastapi-versioning)
