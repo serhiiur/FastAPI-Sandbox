@@ -78,3 +78,4 @@ dc -f fastapi-docker-cAdvisor/docker-compose.yml up
 - [Github. RichAPI is designed to simplify FastAPI projects by automatically generating documented HTTP responses from HTTPException without extra effort](https://github.com//ManiMozaffar/richapi)
 - [Github. Generate a mypy- and IDE-friendly API client from an OpenAPI spec.](https://github.com/dmontagu/fastapi_client)
 - [Github. API versioning for fastapi web applications](https://github.com/DeanWay/fastapi-versioning)
+- [Github. FastCRUD is a Python package for FastAPI, offering robust async CRUD operations](https://github.com/benavlabs/fastcrud)
