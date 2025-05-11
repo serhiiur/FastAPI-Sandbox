@@ -12,7 +12,11 @@ dependencies = [
     "fastapi[standard] (>=0.115.12,<0.116.0)",
     "python-multipart (>=0.0.20,<0.0.21)",
     "aiofiles (>=24.1.0,<25.0.0)",
-    "fastcrud (>=0.15.7,<0.16.0)"
+    "fastcrud (>=0.15.7,<0.16.0)",
+    "aiosqlite (>=0.21.0,<0.22.0)",
+    "sqlmodel (>=0.0.24,<0.0.25)",
+    "pytest (>=8.3.5,<9.0.0)",
+    "faker (>=37.1.0,<38.0.0)"
 ]
 
 
