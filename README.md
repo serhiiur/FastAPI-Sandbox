@@ -6,17 +6,17 @@ Theory + practice for using RabbitMQ
 
 - [example_0. Upload one and multiple files synchronously and asynchronously](file-upload):
 ```bash
-poetry run fastapi dev file-upload/api.py
+pr fastapi dev file-upload/api.py
 ```
 
 - [example_1. Example of running blocking synchonous functions in the custom and Starlette's Thread Pool Executor](fastapi-threadpool-executor):
 ```bash
-poetry run fastapi dev fastapi-threadpool-executor/api.py
+pr fastapi dev fastapi-threadpool-executor/api.py
 ```
 
 - [example_2. Example of protecting routes in FastAPI](fastapi-protected-routes):
 ```bash
-poetry run fastapi dev fastapi-protected-routes/api.py
+pr fastapi dev fastapi-protected-routes/api.py
 ```
 
 - [example_3. Example of monitoring a basic FastAPI app with cAdvisor](fastapi-docker-cAdvisor):
@@ -24,6 +24,29 @@ poetry run fastapi dev fastapi-protected-routes/api.py
 dc -f fastapi-docker-cAdvisor/docker-compose.yml up
 ```
 
+- [example_4. CRUD FastAPI App using FastCRUD + SQLAlchemy](fastapi-fastcrud-api-1):
+```bash
+pr fastapi dev fastapi-fastcrud-api-1/api.py
+
+# run tests
+pr pytest -vs -W ignore fastapi-fastcrud-api-1/test_api.py
+```
+
+- [example_5. CRUD FastAPI App using FastCRUD + SQLModel](fastapi-fastcrud-api-2):
+```bash
+pr fastapi dev fastapi-fastcrud-api-2/api.py
+
+# run tests
+pr pytest -vs -W ignore fastapi-fastcrud-api-2/test_api.py
+```
+
+- [example_6. CRUD FastAPI App using FastCRUD + SQLModel (manual implementaion of endpoints)](fastapi-fastcrud-api-3):
+```bash
+pr fastapi dev fastapi-fastcrud-api-3/api.py
+
+# run tests
+pr pytest -vs -W ignore fastapi-fastcrud-api-3/test_api.py
+```
 
 
 
@@ -65,17 +88,24 @@ dc -f fastapi-docker-cAdvisor/docker-compose.yml up
 
 * The number of worker threads in the `ThreadPoolExecutor` is not related to the number of CPUs or CPU cores in your system. You can configure the number of threads based on the number of tasks you need to execute.
 
-
+* *uvloop* is used to replace the event loop in the standard library asyncio. It is implemented with Cython and is very fast, which can increase the speed of asyncio by 2–4 times.
 
 
 
 ## Useful Links
-- [StackOverflow. How to Upload File using FastAPI?](https://stackoverflow.com/questions/63048825/how-to-upload-file-using-fastapi)
-- [StackOverflow. FastAPI UploadFile is slow compared to Flask](https://stackoverflow.com/questions/65342833/fastapi-uploadfile-is-slow-compared-to-flask/70667530#70667530)
-- [StackOverflow. Conurrency and Parallelism in FastAPI](https://stackoverflow.com/questions/71516140/fastapi-runs-api-calls-in-serial-instead-of-parallel-fashion/71517830#71517830)
-- [StackOverflow. Performance results differ between run_in_threadpool() and run_in_executor() in FastAPI](https://stackoverflow.com/questions/77935269/performance-results-differ-between-run-in-threadpool-and-run-in-executor-in/77941425#77941425)
-- [Github. Datamodel Code Generator](https://github.com/koxudaxi/datamodel-code-generator)
-- [Github. RichAPI is designed to simplify FastAPI projects by automatically generating documented HTTP responses from HTTPException without extra effort](https://github.com//ManiMozaffar/richapi)
-- [Github. Generate a mypy- and IDE-friendly API client from an OpenAPI spec.](https://github.com/dmontagu/fastapi_client)
-- [Github. API versioning for fastapi web applications](https://github.com/DeanWay/fastapi-versioning)
-- [Github. FastCRUD is a Python package for FastAPI, offering robust async CRUD operations](https://github.com/benavlabs/fastcrud)
+- StackOverflow:
+  - [How to Upload File using FastAPI?](https://stackoverflow.com/questions/63048825/how-to-upload-file-using-fastapi)
+  - [FastAPI UploadFile is slow compared to Flask](https://stackoverflow.com/questions/65342833/fastapi-uploadfile-is-slow-compared-to-flask/70667530#70667530)
+  - [Conurrency and Parallelism in FastAPI](https://stackoverflow.com/questions/71516140/fastapi-runs-api-calls-in-serial-instead-of-parallel-fashion/71517830#71517830)
+  - [Performance results differ between run_in_threadpool() and run_in_executor() in FastAPI](https://stackoverflow.com/questions/77935269/performance-results-differ-between-run-in-threadpool-and-run-in-executor-in/77941425#77941425)
+
+- Github:
+  - [Datamodel Code Generator](https://github.com/koxudaxi/datamodel-code-generator)
+  - [RichAPI is designed to simplify FastAPI projects by automatically generating documented HTTP responses from HTTPException without extra effort](https://github.com//ManiMozaffar/richapi)
+  - [Generate a mypy- and IDE-friendly API client from an OpenAPI spec.](https://github.com/dmontagu/fastapi_client)
+  - [API versioning for fastapi web applications](https://github.com/DeanWay/fastapi-versioning)
+  - [FastCRUD is a Python package for FastAPI, offering robust async CRUD operations](https://github.com/benavlabs/fastcrud)
+  - [FastAPI boilerplate (SQLmodel version)](https://github.com/benavlabs/SQLModel-boilerplate/tree/main)
+
+- Documentation:
+  - [FastCRUD. Advanced Filtering](https://benavlabs.github.io/fastcrud/advanced/filters/)
