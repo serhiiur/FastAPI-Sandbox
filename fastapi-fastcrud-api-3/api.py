@@ -1,9 +1,10 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Annotated, AsyncIterator, Literal
-from uuid import uuid4
+from logging import getLogger
+from typing import Any, Annotated, AsyncIterator, Literal, TYPE_CHECKING
+from uuid import uuid4, UUID
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastcrud import FastCRUD
@@ -13,10 +14,16 @@ from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession as AS
 from sqlalchemy.orm import sessionmaker
 
+if TYPE_CHECKING:
+  from logging import Logger
 
+
+# Settings
 MIN_USER_NAME_LENGTH = 2
 MAX_USER_NAME_LENGTH = 255
+LOGGER_NAME = "uvicorn.error"
 
+# Database
 DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 engine = create_async_engine(DATABASE_URL, echo=True)
 async_session = sessionmaker(engine, class_=AS, expire_on_commit=False)
@@ -90,6 +97,42 @@ class UserSelectFilters(BaseModel):
   )
 
 
+responses = {
+  404: {
+    "description": "User not found in the database",
+    "content": {
+      "application/json": {
+        "example": {
+          "error": "User not found"
+        }
+      }
+    }
+  },
+  409: {
+    "description": "User already exists in the database",
+    "content": {
+      "application/json": {
+        "example": {
+          "error": "User already exists"
+        }
+      }
+    }
+  },
+  422: {
+    "description": "Data validation error",
+    "content": {
+      "application/json": {
+        "example": {
+          "error": "Value is not a valid email address"
+        }
+      }
+    }
+  },
+}
+
+RawUserResponse = dict[str, Any]
+
+
 class UsersResponse(BaseModel):
   """Schema used to display multiple users from the database"""
   data: list[User] = Field(
@@ -117,11 +160,12 @@ async def db_not_found_error_handler(
 
 
 async def db_integrity_error_handler(
-  _: Request,
+  request: Request,
   e: IntegrityError
 ) -> JSONResponse:
   """Database. Integrity error handler"""
-  # log error
+  logger: "Logger" = getattr(request.app.state, "logger")  # type: ignore
+  logger.error(f"Database Integrity Error: {e}")
   msg = {"error": "User already exists"}
   return JSONResponse(msg, status.HTTP_409_CONFLICT)
 
@@ -136,11 +180,12 @@ async def validation_error_handler(
 
 
 async def unexpected_error_handler(
-  _: Request,
+  request: Request,
   e: Exception
 ) -> JSONResponse:
   """Error handler for all uncaught exceptions"""
-  # log error
+  logger: "Logger" = getattr(request.app.state, "logger")  # type: ignore
+  logger.error(f"Internal Server Error: {e}")
   msg = {"error": "Internal server error. Try again later"}
   return JSONResponse(msg, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -148,9 +193,12 @@ async def unexpected_error_handler(
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator:
   """Create the database objects on the application startup"""
+  app.state.logger = getLogger(LOGGER_NAME)  # type: ignore
+  # Create database objects on the application startup
   async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)
   yield
+  await engine.dispose()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -174,22 +222,27 @@ async def health() -> dict[str, str]:
   "/users/{id}",
   description="Get information about user from the database",
   response_model=User,
+  responses={404: responses[404], 422: responses[422]}
 )
-async def get_user(id: str, db: Annotated[AS, Depends(get_session)]):
-  if user := await user_crud.get(db, id=id):
+async def get_user(
+  id: UUID,
+  db: Annotated[AS, Depends(get_session)]
+) -> RawUserResponse:
+  if user := await user_crud.get(db, id=str(id)):
     return user
-  raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+  raise NoResultFound("User not found")
 
 
 @app.get(
   "/users",
   description="Get information about users from the database",
   response_model=UsersResponse,
+  responses={404: responses[404], 422: responses[422]}
 )
 async def get_users(
   filters: Annotated[UserSelectFilters, Depends()],
   db: Annotated[AS, Depends(get_session)]
-) -> UsersResponse:
+) -> dict[str, list[RawUserResponse] | int]:
   return await user_crud.get_multi(db, **filters.model_dump())
 
 
@@ -197,7 +250,8 @@ async def get_users(
   "/users",
   description="Add a new user to the database",
   response_model=User,
-  status_code=status.HTTP_201_CREATED
+  status_code=status.HTTP_201_CREATED,
+  responses={409: responses[409], 422: responses[422]}
 )
 async def create_user(
   user: CreateUser,
@@ -209,30 +263,31 @@ async def create_user(
 @app.delete(
   "/users/{id}",
   description="Delete a user from the database",
-  status_code=status.HTTP_204_NO_CONTENT
+  status_code=status.HTTP_204_NO_CONTENT,
+  responses={404: responses[404], 422: responses[422]}
 )
 async def delete_user(
-  id: str,
+  id: UUID,
   db: Annotated[AS, Depends(get_session)]
-) -> Response:
-  await user_crud.delete(db, id=id)
-  return Response(status_code=status.HTTP_204_NO_CONTENT)
+) -> None:
+  return await user_crud.delete(db, id=str(id))
 
 
 @app.patch(
   "/users/{id}",
   description="Update existing user in the database",
   response_model=User,
+  responses={**responses}
 )
 async def update_user(
-  id: str,
+  id: UUID,
   user: UpdateUser,
   db: Annotated[AS, Depends(get_session)]
 ) -> User:
   return await user_crud.update(
     db,
     object=user.model_dump(exclude_defaults=True),
-    id=id,
+    id=str(id),
     schema_to_select=User,
     return_as_model=True,
   )
