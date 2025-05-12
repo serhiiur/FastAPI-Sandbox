@@ -98,6 +98,7 @@ pr pytest -vs -W ignore fastapi-fastcrud-api-3/test_api.py
   - [FastAPI UploadFile is slow compared to Flask](https://stackoverflow.com/questions/65342833/fastapi-uploadfile-is-slow-compared-to-flask/70667530#70667530)
   - [Conurrency and Parallelism in FastAPI](https://stackoverflow.com/questions/71516140/fastapi-runs-api-calls-in-serial-instead-of-parallel-fashion/71517830#71517830)
   - [Performance results differ between run_in_threadpool() and run_in_executor() in FastAPI](https://stackoverflow.com/questions/77935269/performance-results-differ-between-run-in-threadpool-and-run-in-executor-in/77941425#77941425)
+  - [How to configure FastAPI logging (Uvicorn)](https://stackoverflow.com/questions/77001129/how-to-configure-fastapi-logging-so-that-it-works-both-with-uvicorn-locally-and)
 
 - Github:
   - [Datamodel Code Generator](https://github.com/koxudaxi/datamodel-code-generator)
