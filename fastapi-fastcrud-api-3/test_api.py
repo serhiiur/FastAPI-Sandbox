@@ -1,4 +1,5 @@
 import asyncio
+from logging import getLogger
 from typing import AsyncIterator
 
 import pytest
@@ -60,6 +61,7 @@ def anyio_backend() -> str:
 @pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AC]:
   """Async HTTP client to test FastAPI endpoints"""
+  app.state.logger = getLogger()  # type: ignore
   app.dependency_overrides[get_session] = override_get_session
   transport = ASGITransport(app)
   async with AC(base_url="http://test", transport=transport) as ac:
