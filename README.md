@@ -48,6 +48,14 @@ pr fastapi dev fastapi-fastcrud-api-3/api.py
 pr pytest -vs -W ignore fastapi-fastcrud-api-3/test_api.py
 ```
 
+- [example_6. CRUD FastAPI App based on FastCRUD + SQLModel and FastAPI cache extension based on Redis)](fastapi-crud-api-with-redis-cache):
+```bash
+pr fastapi dev fastapi-crud-api-with-redis-cache/api.py
+
+# run tests
+pr pytest -vsx -W ignore fastapi-crud-api-with-redis-cache/test_api.py
+```
+
 
 
 ## Notes
@@ -107,6 +115,7 @@ pr pytest -vs -W ignore fastapi-fastcrud-api-3/test_api.py
   - [API versioning for fastapi web applications](https://github.com/DeanWay/fastapi-versioning)
   - [FastCRUD is a Python package for FastAPI, offering robust async CRUD operations](https://github.com/benavlabs/fastcrud)
   - [FastAPI boilerplate (SQLmodel version)](https://github.com/benavlabs/SQLModel-boilerplate/tree/main)
+  - [FastAPI Cache. Tool to cache FastAPI endpoint and function results](https://github.com/long2ice/fastapi-cache)
 
 - Documentation:
   - [FastCRUD. Advanced Filtering](https://benavlabs.github.io/fastcrud/advanced/filters/)
