@@ -119,3 +119,7 @@ pr pytest -vsx -W ignore fastapi-crud-api-with-redis-cache/test_api.py
 
 - Documentation:
   - [FastCRUD. Advanced Filtering](https://benavlabs.github.io/fastcrud/advanced/filters/)
+
+- Youtube:
+  - [4 Tips for Building a Production-Ready FastAPI Backend](https://www.youtube.com/watch?v=XlnmN4BfCxw)
+
