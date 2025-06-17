@@ -4,64 +4,20 @@ Theory + practice for using RabbitMQ
 
 ## Navigation
 
-- [example_0. Upload one and multiple files synchronously and asynchronously](file-upload):
-```bash
-pr fastapi dev file-upload/api.py
-```
-
-- [example_1. Example of running blocking synchonous functions in the custom and Starlette's Thread Pool Executor](fastapi-threadpool-executor):
-```bash
-pr fastapi dev fastapi-threadpool-executor/api.py
-```
-
-- [example_2. Example of protecting routes in FastAPI](fastapi-protected-routes):
-```bash
-pr fastapi dev fastapi-protected-routes/api.py
-```
-
-- [example_3. Example of monitoring a basic FastAPI app with cAdvisor](fastapi-docker-cAdvisor):
-```bash
-dc -f fastapi-docker-cAdvisor/docker-compose.yml up
-```
-
-- [example_4. CRUD FastAPI App using FastCRUD + SQLAlchemy](fastapi-fastcrud-api-1):
-```bash
-pr fastapi dev fastapi-fastcrud-api-1/api.py
-
-# run tests
-pr pytest -vs -W ignore fastapi-fastcrud-api-1/test_api.py
-```
-
-- [example_5. CRUD FastAPI App using FastCRUD + SQLModel](fastapi-fastcrud-api-2):
-```bash
-pr fastapi dev fastapi-fastcrud-api-2/api.py
-
-# run tests
-pr pytest -vs -W ignore fastapi-fastcrud-api-2/test_api.py
-```
-
-- [example_6. CRUD FastAPI App using FastCRUD + SQLModel (manual implementaion of endpoints)](fastapi-fastcrud-api-3):
-```bash
-pr fastapi dev fastapi-fastcrud-api-3/api.py
-
-# run tests
-pr pytest -vs -W ignore fastapi-fastcrud-api-3/test_api.py
-```
-
-- [example_6. CRUD FastAPI App based on FastCRUD + SQLModel and FastAPI cache extension based on Redis)](fastapi-crud-api-with-redis-cache):
-```bash
-pr fastapi dev fastapi-crud-api-with-redis-cache/api.py
-
-# run tests
-pr pytest -vsx -W ignore fastapi-crud-api-with-redis-cache/test_api.py
-```
-
+- [Upload one and multiple files synchronously and asynchronously](file-upload)
+- [Running blocking synchronous functions in the custom and Starlette's Thread Pool Executor](fastapi-threadpool-executor)
+- [API with protected routes](fastapi-protected-routes)
+- [Monitoring of a FastAPI app with cAdvisor](fastapi-docker-cAdvisor)
+- [FastCRUD + SQLAlchemy](fastapi-fastcrud-api-1)
+- [FastCRUD + SQLModel](fastapi-fastcrud-api-2)
+- [FastCRUD + SQLModel (advanced)](fastapi-fastcrud-api-3)
+- [FastCRUD + SQLModel + FastAPI Cache(Redis)](fastapi-crud-api-with-redis-cache)
 
 
 ## Notes
 * When you declare an endpoint with normal `def` instead of `async def`, it is run in an external threadpool that is then awaited, instead of being called directly (as it would block the server).
 
-* If you are using a third party library that communicates with something (a database, an API, the file system, etc.) and doesn't have support for using `await`, then declare your endpoints as normally, with just `def`.
+* If you are using a third party library that communicates with a database, API, file system etc., and doesn't have support for using `await`, then declare your endpoints as normally, with just `def`.
 
 * You can mix `def` and `async def` in your endpoints as much as you need and define each one using the best option for you.
 
@@ -69,14 +25,13 @@ pr pytest -vsx -W ignore fastapi-crud-api-with-redis-cache/test_api.py
 
 * Every time an HTTP request arrives at an endpoint defined with normal `def`, a new thread will be spawned (or an idle thread will be used, if available). So you might need to adjust the maximum number of threads in that threadpool.
 
-* You should always aim at using asynchronous code (i.e., using async/await), wherever is possible, as async code runs directly in the event loop which runs in a single thread (in this case, the main thread).
+* You should always aim at using asynchronous code wherever possible, as async code runs directly in the event loop which runs in a single thread (in this case, the main thread).
 
 * In order to run an endpoint or a function described above in a separate thread and await it, FastAPI uses Starlette's asynchronous [run_in_threadpool()](https://github.com/encode/starlette/blob/b8ea367b4304a98653ec8ce9c794ad0ba6dcaf4b/starlette/concurrency.py#L35) function, which, under the hood, calls `anyio.to_thread.run_sync()`.
 
 * The default number of worker threads of that external threadpool is 40 and can be adjusted as required. [See](https://stackoverflow.com/a/77941425/17865804).
 
-* When using a web browser to call the same endpoint for the second (third, and so on) time, please remember to do that from a tab that is isolated from the browser's main session; otherwise, succeeding requests (i.e., coming after the first one) might be blocked by the browser (i.e., on client side), as the browser might be waiting for a response to the previous request from the server, before sending the next request. This is a common behaviour for the Chrome web browser at least, due to waiting to see the result of a request and check if the result can be cached, before requesting the same resource again (Also, note that every browser has a specific limit for parallel connections to a given hostname).
-
+* When using a web browser to call the same endpoint for the second (third, and so on) time, please remember to do that from a tab that is isolated from the browser's main session; otherwise, succeeding requests (i.e., coming after the first one) might be blocked by the browser (i.e., on client side), as the browser might be waiting for a response to the previous request from the server, before sending the next request. This is a common behavior for the Chrome web browser at least, due to waiting to see the result of a request and check if the result can be cached, before requesting the same resource again (Also, note that every browser has a specific limit for parallel connections to a given hostname).
 
 * Use more server workers to take advantage of multi-core CPUs, in order to run multiple processes in parallel and be able to serve more requests. For example, uvicorn main:app --workers 4. When using 1 worker, only one process is run. When using multiple workers, this will spawn multiple processes (all single threaded). Each process has a separate GIL, as well as its own event loop, which runs in the main thread of each process and executes all tasks in its thread. That means, there is only one thread that can take a lock on the interpreter of each process; unless, of course, you employ additional threads, either outside or inside the event loop, e.g., when using run_in_threadpool, a custom ThreadPoolExecutor
 
@@ -90,7 +45,7 @@ pr pytest -vsx -W ignore fastapi-crud-api-with-redis-cache/test_api.py
 
 * To run tasks in the background, without waiting for them to complete, in order to proceed with executing the rest of the code in an endpoint, you could use FastAPI's `BackgroundTasks`, as shown here and here. If the background task function is defined with `async def`, FastAPI will run it directly in the event loop, whereas if it is defined with normal `def`, FastAPI will use `run_in_threadpool()` and `await` the returned coroutine (same concept as API endpoints). 
 
-* Another option when you need to run an `async def` function in the background, but not necessarily having it trigerred after returning a FastAPI response (which is the case in BackgroundTasks), is to use `asyncio.create_task()`.
+* Another option when you need to run an `async def` function in the background, but not necessarily having it triggered after returning a FastAPI response (which is the case in BackgroundTasks), is to use `asyncio.create_task()`.
 
 * It is important to limit the number of worker threads in the thread pools to the number of asynchronous tasks you wish to complete, based on the resources in your system, or on the number of resources you intend to use within your tasks.
 
@@ -104,7 +59,7 @@ pr pytest -vsx -W ignore fastapi-crud-api-with-redis-cache/test_api.py
 - StackOverflow:
   - [How to Upload File using FastAPI?](https://stackoverflow.com/questions/63048825/how-to-upload-file-using-fastapi)
   - [FastAPI UploadFile is slow compared to Flask](https://stackoverflow.com/questions/65342833/fastapi-uploadfile-is-slow-compared-to-flask/70667530#70667530)
-  - [Conurrency and Parallelism in FastAPI](https://stackoverflow.com/questions/71516140/fastapi-runs-api-calls-in-serial-instead-of-parallel-fashion/71517830#71517830)
+  - [Concurrency and Parallelism in FastAPI](https://stackoverflow.com/questions/71516140/fastapi-runs-api-calls-in-serial-instead-of-parallel-fashion/71517830#71517830)
   - [Performance results differ between run_in_threadpool() and run_in_executor() in FastAPI](https://stackoverflow.com/questions/77935269/performance-results-differ-between-run-in-threadpool-and-run-in-executor-in/77941425#77941425)
   - [How to configure FastAPI logging (Uvicorn)](https://stackoverflow.com/questions/77001129/how-to-configure-fastapi-logging-so-that-it-works-both-with-uvicorn-locally-and)
 
@@ -112,14 +67,13 @@ pr pytest -vsx -W ignore fastapi-crud-api-with-redis-cache/test_api.py
   - [Datamodel Code Generator](https://github.com/koxudaxi/datamodel-code-generator)
   - [RichAPI is designed to simplify FastAPI projects by automatically generating documented HTTP responses from HTTPException without extra effort](https://github.com//ManiMozaffar/richapi)
   - [Generate a mypy- and IDE-friendly API client from an OpenAPI spec.](https://github.com/dmontagu/fastapi_client)
-  - [API versioning for fastapi web applications](https://github.com/DeanWay/fastapi-versioning)
+  - [API versioning for FastAPI web applications](https://github.com/DeanWay/fastapi-versioning)
   - [FastCRUD is a Python package for FastAPI, offering robust async CRUD operations](https://github.com/benavlabs/fastcrud)
   - [FastAPI boilerplate (SQLmodel version)](https://github.com/benavlabs/SQLModel-boilerplate/tree/main)
   - [FastAPI Cache. Tool to cache FastAPI endpoint and function results](https://github.com/long2ice/fastapi-cache)
 
-- Documentation:
+- Docs:
   - [FastCRUD. Advanced Filtering](https://benavlabs.github.io/fastcrud/advanced/filters/)
 
 - Youtube:
   - [4 Tips for Building a Production-Ready FastAPI Backend](https://www.youtube.com/watch?v=XlnmN4BfCxw)
-
