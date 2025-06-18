@@ -19,10 +19,35 @@ dependencies = [
     "faker (>=37.1.0,<38.0.0)",
     "fastapi-cache2[redis] (>=0.2.2,<0.3.0)",
     "fakeredis (>=2.29.0,<3.0.0)",
-    "asgi-lifespan (>=2.1.0,<3.0.0)"
+    "asgi-lifespan (>=2.1.0,<3.0.0)",
+    "sqladmin (>=0.20.1,<0.21.0)",
 ]
-
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+
+[tool.ruff]
+target-version = "py312"
+lint.extend-select = ["ALL"]
+lint.ignore = ["D100", "D104", "D204", "COM812"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"test_*" = ["S101", "D103"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_unreachable = true
+exclude = [".venv", "api/__pycache__", "tests/__pycache__"]
+
+[tool.poetry.group.dev.dependencies]
+mypy = "^1.16.1"
+ruff = "^0.12.0"
+
