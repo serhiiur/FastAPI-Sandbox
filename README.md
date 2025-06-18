@@ -12,6 +12,7 @@ Theory + practice for using RabbitMQ
 - [FastCRUD + SQLModel](fastapi-fastcrud-api-2)
 - [FastCRUD + SQLModel (advanced)](fastapi-fastcrud-api-3)
 - [FastCRUD + SQLModel + FastAPI Cache(Redis)](fastapi-crud-api-with-redis-cache)
+- [FastCRUD + SQLModel + SQLAdmin](fastapi-fastcrud-sqladmin-api)
 
 
 ## Notes
