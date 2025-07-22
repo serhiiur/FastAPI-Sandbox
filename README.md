@@ -1,5 +1,5 @@
 ## Introduction
-Theory + practice for using RabbitMQ
+Theory and practice for using FastAPI
 
 
 ## Navigation
@@ -13,6 +13,8 @@ Theory + practice for using RabbitMQ
 - [FastCRUD + SQLModel (advanced)](fastapi-fastcrud-api-3)
 - [FastCRUD + SQLModel + FastAPI Cache(Redis)](fastapi-crud-api-with-redis-cache)
 - [FastCRUD + SQLModel + SQLAdmin](fastapi-fastcrud-sqladmin-api)
+- [FastAPI CRUD API + Redis OM](fastapi-redis-om-crud-api)
+
 
 
 ## Notes
@@ -72,6 +74,7 @@ Theory + practice for using RabbitMQ
   - [FastCRUD is a Python package for FastAPI, offering robust async CRUD operations](https://github.com/benavlabs/fastcrud)
   - [FastAPI boilerplate (SQLmodel version)](https://github.com/benavlabs/SQLModel-boilerplate/tree/main)
   - [FastAPI Cache. Tool to cache FastAPI endpoint and function results](https://github.com/long2ice/fastapi-cache)
+  - [Redis OM](github.com/redis/redis-om-python)
 
 - Docs:
   - [FastCRUD. Advanced Filtering](https://benavlabs.github.io/fastcrud/advanced/filters/)
