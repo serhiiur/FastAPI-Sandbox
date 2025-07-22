@@ -8,6 +8,7 @@ dependencies = [
     "aiofiles>=24.1.0",
     "aiosqlite>=0.21.0",
     "asgi-lifespan>=2.1.0",
+    "email-validator>=2.2.0",
     "faker>=37.4.2",
     "fakeredis>=2.30.1",
     "fastapi-cache2[redis]>=0.2.2",
@@ -23,11 +24,19 @@ dependencies = [
 [tool.ruff]
 target-version = "py312"
 lint.extend-select = ["ALL"]
-lint.ignore = ["COM812", "D100", "D104", "D203", "D204", "ERA001", "UP040"]
-indent-width = 2
+lint.ignore = [
+  "COM812",
+  "D100",
+  "D104",
+  "D203",
+  "D204",
+  "ERA001",
+  "INP001",
+  "UP040"
+]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]
+"test_*.py" = ["D103", "S101"]
 
 [tool.ruff.format]
 quote-style = "double"
