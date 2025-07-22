@@ -1,41 +1,44 @@
 [project]
 name = "fastapi-sandbox"
 version = "0.1.0"
-description = "Theory and Practice of using FastAPI"
-authors = [
-    {name = "prathamlahoti123",email = "prathamlahoti@duck.com"}
-]
-license = {text = "MIT"}
+description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12,<4.0.0"
+requires-python = ">=3.12"
 dependencies = [
-    "fastapi[standard] (>=0.115.12,<0.116.0)",
-    "python-multipart (>=0.0.20,<0.0.21)",
-    "aiofiles (>=24.1.0,<25.0.0)",
-    "fastcrud (>=0.15.7,<0.16.0)",
-    "aiosqlite (>=0.21.0,<0.22.0)",
-    "sqlmodel (>=0.0.24,<0.0.25)",
-    "pytest (>=8.3.5,<9.0.0)",
-    "faker (>=37.1.0,<38.0.0)",
-    "fastapi-cache2[redis] (>=0.2.2,<0.3.0)",
-    "fakeredis (>=2.29.0,<3.0.0)",
-    "asgi-lifespan (>=2.1.0,<3.0.0)",
-    "sqladmin (>=0.20.1,<0.21.0)",
+    "aiofiles>=24.1.0",
+    "aiosqlite>=0.21.0",
+    "asgi-lifespan>=2.1.0",
+    "faker>=37.4.2",
+    "fakeredis>=2.30.1",
+    "fastapi-cache2[redis]>=0.2.2",
+    "fastapi[standard]>=0.116.1",
+    "fastcrud>=0.15.12",
+    "pytest>=8.4.1",
+    "python-multipart>=0.0.20",
+    "redis-om>=0.3.5",
+    "sqladmin>=0.21.0",
+    "sqlmodel>=0.0.24",
 ]
-
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
-
 
 [tool.ruff]
 target-version = "py312"
 lint.extend-select = ["ALL"]
-lint.ignore = ["D100", "D104", "D204", "COM812"]
+lint.ignore = ["COM812", "D100", "D104", "D203", "D204", "ERA001", "UP040"]
+indent-width = 2
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101"]
-"test_*" = ["S101", "D103"]
+
+[tool.ruff.format]
+quote-style = "double"
+line-ending = "auto"
+
+[tool.bandit]
+exclude_dirs = [".venv", "__pycache__"]
+skips = ["B101"]
+tests = ["B104", "B105", "B113"]
+severity = "high"
+confidence = "high"
 
 [tool.mypy]
 python_version = "3.12"
@@ -45,9 +48,9 @@ disallow_untyped_defs = true
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_unreachable = true
-exclude = [".venv", "api/__pycache__", "tests/__pycache__"]
-
-[tool.poetry.group.dev.dependencies]
-mypy = "^1.16.1"
-ruff = "^0.12.0"
-
+exclude = [
+  "__pycache__",
+  ".venv",
+  ".pytest_cache",
+  ".ruff_cache",
+]
