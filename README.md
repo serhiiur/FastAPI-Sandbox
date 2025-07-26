@@ -14,7 +14,8 @@ Theory and practice for using FastAPI
 - [FastCRUD + SQLModel + FastAPI Cache(Redis)](fastapi-crud-api-with-redis-cache)
 - [FastCRUD + SQLModel + SQLAdmin](fastapi-fastcrud-sqladmin-api)
 - [FastAPI CRUD API + Redis OM](fastapi-redis-om-crud-api)
-
+- [FastAPI CRUD API + Beanie(MongoDB)](fastapi-mongodb-crud-api-1)
+- [FastAPI CRUD API + Motor(MongoDB)](fastapi-mongodb-crud-api-2)
 
 
 ## Notes
