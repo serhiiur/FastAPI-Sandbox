@@ -17,6 +17,7 @@ Theory and practice for using FastAPI
 - [FastAPI CRUD API + Beanie(MongoDB)](fastapi-mongodb-crud-api-1)
 - [FastAPI CRUD API + Motor(MongoDB)](fastapi-mongodb-crud-api-2)
 - [FastAPI CRUD API + Httpx (integration with 3rd-party API)](fastapi-httpx)
+- [FastAPI API + AWS S3 (aiobotocore)](fastapi-aws-s3-api)
 
 
 ## Notes
