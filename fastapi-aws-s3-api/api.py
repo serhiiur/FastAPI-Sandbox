@@ -1,0 +1,305 @@
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Annotated, Literal, Self, TypeAlias, TypedDict
+
+# import aiofiles
+from aiobotocore.session import get_session
+from botocore.exceptions import ClientError
+from dotenv import load_dotenv
+from fastapi import (
+  Depends,
+  FastAPI,
+  File,
+  HTTPException,
+  Query,
+  Request,
+  Response,
+  UploadFile,
+  status,
+)
+from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
+from starlette.middleware.base import BaseHTTPMiddleware
+
+if TYPE_CHECKING:
+  from starlette.middleware.base import RequestResponseEndpoint
+  from starlette.types import ASGIApp
+  from types_aiobotocore_s3.client import S3Client
+
+
+load_dotenv()
+
+
+# Settings
+AWS_CONFIG = {
+  "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID"),
+  "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
+}
+MAX_FILE_UPLOAD_SIZE = 1_000_000  # 1MB
+
+
+class MaxUploadFileSizeMiddleware(BaseHTTPMiddleware):
+  """Middleware to validate size of the uploaded file."""
+
+  def __init__(self, app: "ASGIApp", max_upload_file_size: int) -> None:
+    """Init property to specify max file size of a file."""
+    super().__init__(app)
+    self.max_upload_file_size = max_upload_file_size
+
+  async def dispatch(
+    self, request: Request, call_next: "RequestResponseEndpoint"
+  ) -> Response:
+    """Verify value of the content-length header.
+
+    Return HTTP 411 status if length of the content is not set.
+    Return HTTP 413 if length exceeds the limit.
+    """
+    if request.method == "POST":
+      content_length = request.headers.get("content-length")
+      if not content_length:
+        return Response(status_code=status.HTTP_411_LENGTH_REQUIRED)
+      if int(content_length) > self.max_upload_file_size:
+        max_file_size_in_mb = self.max_upload_file_size // 1_000_000
+        return PlainTextResponse(
+          content=f"File is to big. Max file size is {max_file_size_in_mb} MB",
+          status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        )
+    return await call_next(request)
+
+
+async def aws_client_error_handler(_: Request, e: ClientError) -> JSONResponse:
+  """AWS client error handler."""
+  content = f"Client Error: {e}"
+  status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+  # No such bucket error handling
+  if e.response["Error"]["Code"] == "NoSuchBucket":
+    content = e.response["Error"]["Message"]
+    status_code = status.HTTP_404_NOT_FOUND
+  return JSONResponse(content, status_code)
+
+
+class AppState(TypedDict):
+  """Data structure to represent state of the main app."""
+
+  s3_client: "S3Client"
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[AppState]:
+  """Define the client to interact with AWS S3."""
+  s3_session = get_session()
+  async with s3_session.create_client("s3", **AWS_CONFIG) as s3_client:
+    yield AppState(s3_client=s3_client)
+
+
+async def get_s3_client(request: Request) -> "S3Client":
+  """Return the client to interact with S3 declared in the app's lifespan."""
+  return request.state.s3_client
+
+
+app = FastAPI(lifespan=lifespan)
+app.add_exception_handler(ClientError, aws_client_error_handler)
+app.add_middleware(
+  MaxUploadFileSizeMiddleware, max_upload_file_size=MAX_FILE_UPLOAD_SIZE
+)
+
+# Query param to specify name of S3 bucket
+BucketQueryParam = Query(
+  description="Name of S3 bucket",
+  example="my-bucket-cace19b497e8",
+)
+
+
+class S3BucketName(BaseModel):
+  """Schema to specify name of S3 bucket."""
+
+  name: str = Field(
+    alias="bucket", description="Name of S3 bucket", example="my-bucket-cace19b497e8"
+  )
+
+
+class S3ObjectInfo(BaseModel):
+  """Schema to specify info about object in S3 bucket.
+
+  NOTE: we wrap Query into Field because without it
+        some extra params such as title, description,
+        example, etc. aren't displayed in the OpenAPI
+        schema.
+        See: https://github.com/fastapi/fastapi/issues/4700
+
+  NOTE: when using a Pydantic model for POST-based routes, then
+        Query argument can be ignored and an example of field can
+        be declared within a pydantic's Field method like this:
+        Field(example='test') instead of Field(Query(example='test'))
+  """
+
+  bucket: str = Field(BucketQueryParam, serialization_alias="Bucket")
+  object: str = Field(
+    Query(
+      description="Name of object in S3 bucket",
+      example="hehe.png",
+    ),
+    serialization_alias="Key",
+  )
+  version: str | None = Field(
+    Query(
+      None,
+      description="Version of object in S3 bucket",
+      example="9fda9ee0-58fd-44f9-8816-d90e377079c0",
+    ),
+    serialization_alias="VersionId",
+  )
+  model_config = ConfigDict(populate_by_name=True)
+
+
+class AWSResponseListObjects(BaseModel):
+  """Schema to represent info about objects in S3 bucket."""
+
+  bucket: str = Field(BucketQueryParam)
+  objects: list[str] = Field(default_factory=list)
+  count: int = 0
+
+  @model_validator(mode="after")
+  def count_objects(self) -> Self:
+    """Set self.count attribute based on length of self.objects attribute."""
+    self.count = len(self.objects)
+    return self
+
+
+class S3ObjectURL(BaseModel):
+  """Schema to represent a URL of the object in S3 bucket."""
+
+  url: AnyHttpUrl = Field(description="URL to S3 object")
+
+
+class Status(BaseModel):
+  """Schema to specify status of the operation."""
+
+  status: Literal["created", "uploaded"]
+
+
+# Reused S3-client annotation with dependency
+S3_Client: TypeAlias = Annotated["S3Client", Depends(get_s3_client)]
+S3_Object: TypeAlias = Annotated[S3ObjectInfo, Depends()]
+
+
+@app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
+async def health() -> Response:
+  """Health-check endpoint."""
+  return Response(
+    status_code=status.HTTP_204_NO_CONTENT, headers={"x-status": "health"}
+  )
+
+
+@app.post("/bucket/create", status_code=status.HTTP_201_CREATED, tags=["s3 bucket"])
+async def create_bucket(bucket: S3BucketName, s3_client: S3_Client) -> Status:
+  """Create S3 Bucket.
+
+  NOTE: the endpoint returns an HTTP 200 response even if
+        specified bucket already exists in the default location.
+        Once a LocationConstraint is set, the corresponding exception
+        will be thrown.
+        See: https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3/client/create_bucket.html#create-bucket
+  """
+  await s3_client.create_bucket(Bucket=bucket.name)
+  return Status(status="created")
+
+
+@app.delete(
+  "/bucket/delete", status_code=status.HTTP_204_NO_CONTENT, tags=["s3 bucket"]
+)
+async def delete_bucket(bucket: S3BucketName, s3_client: S3_Client) -> Response:
+  """Delete S3 bucket."""
+  objects = await s3_client.list_objects_v2(Bucket=bucket.name)
+  # bucket isn't empty
+  if "Contents" in objects:
+    objects = [{"Key": obj["Key"]} for obj in objects["Contents"]]
+    # Delete all objects of the bucket
+    await s3_client.delete_objects(Bucket=bucket.name, Delete={"Objects": objects})
+  # Delete empty bucket
+  await s3_client.delete_bucket(Bucket=bucket.name)
+  return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.post("/bucket/objects/upload", tags=["s3 object"])
+async def upload_file(
+  bucket: S3BucketName,
+  s3_client: S3_Client,
+  file: Annotated[UploadFile, File(description="File to upload into S3 bucket")],
+) -> Status:
+  """Upload file into S3 bucket."""
+  try:
+    file_content = await file.read()
+    await s3_client.put_object(Bucket=bucket.name, Key=file.filename, Body=file_content)
+  finally:
+    await file.close()
+  return Status(status="uploaded")
+
+
+@app.get("/bucket/objects/list/{bucket}", tags=["s3 object"])
+async def list_objects(bucket: str, s3_client: S3_Client) -> AWSResponseListObjects:
+  """List of objects in S3 bucket.
+
+  NOTE: only first 1000 objects of the bucket are returned.
+  To return all objects you need to pagination.
+  """
+  objects = await s3_client.list_objects_v2(Bucket=bucket)
+  if "Contents" not in objects:
+    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Bucket {bucket} is empty")
+  return AWSResponseListObjects(
+    bucket=bucket, objects=[obj["Key"] for obj in objects["Contents"]]
+  )
+
+
+@app.delete("/bucket/objects/delete", tags=["s3 object"])
+async def delete_object(s3_client: S3_Client, s3_object: S3_Object) -> Response:
+  """Delete object in S3 bucket.
+
+  NOTE: if there's no such object in the bucket,
+  204 response will be returned anyway.
+  """
+  await s3_client.delete_object(
+    **s3_object.model_dump(by_alias=True, exclude_none=True)
+  )
+  return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get(
+  "/bucket/objects/download",
+  tags=["s3 object"],
+  responses={
+    200: {
+      "description": "Download link",
+      "headers": {
+        "Content-Disposition": "attachment;filename=hehe.png",
+        "Content-Type": "application/octet-stream",
+      },
+      "content": {"application/octet-stream": {}},
+    }
+  },
+)
+async def download_object(s3_client: S3_Client, s3_object: S3_Object) -> Response:
+  """Generate download link to object from S3 bucket."""
+  resp = await s3_client.get_object(
+    **s3_object.model_dump(by_alias=True, exclude_none=True)
+  )
+  data = await resp["Body"].read()
+  # async with aiofiles.open(s3_object.object, "wb") as f:
+  #   await f.write(data)
+  return Response(
+    content=data,
+    headers={
+      "Content-Disposition": f"attachment;filename={s3_object.object}",
+      "Content-Type": "application/octet-stream",
+    },
+  )
+
+
+@app.get("/bucket/objects/presign-url", tags=["s3 object"])
+async def presign_object_url(s3_client: S3_Client, s3_object: S3_Object) -> S3ObjectURL:
+  """Generate presigned URL for object in S3 bucket."""
+  presigned_url = await s3_client.generate_presigned_url(
+    "get_object", Params=s3_object.model_dump(by_alias=True, exclude_none=True)
+  )
+  return S3ObjectURL(url=presigned_url)
