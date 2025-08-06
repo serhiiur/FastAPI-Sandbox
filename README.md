@@ -7,17 +7,17 @@ Theory and practice for using FastAPI
 - [Upload one and multiple files synchronously and asynchronously](file-upload)
 - [Running blocking synchronous functions in the custom and Starlette's Thread Pool Executor](fastapi-threadpool-executor)
 - [API with protected routes](fastapi-protected-routes)
-- [Monitoring of a FastAPI app with cAdvisor](fastapi-docker-cAdvisor)
+- [FastAPI + Docker + cAdvisort](fastapi-docker-cAdvisor)
 - [FastCRUD + SQLAlchemy](fastapi-fastcrud-api-1)
 - [FastCRUD + SQLModel](fastapi-fastcrud-api-2)
 - [FastCRUD + SQLModel (advanced)](fastapi-fastcrud-api-3)
 - [FastCRUD + SQLModel + FastAPI Cache(Redis)](fastapi-crud-api-with-redis-cache)
 - [FastCRUD + SQLModel + SQLAdmin](fastapi-fastcrud-sqladmin-api)
-- [FastAPI CRUD API + Redis OM](fastapi-redis-om-crud-api)
-- [FastAPI CRUD API + Beanie(MongoDB)](fastapi-mongodb-crud-api-1)
-- [FastAPI CRUD API + Motor(MongoDB)](fastapi-mongodb-crud-api-2)
-- [FastAPI CRUD API + Httpx (integration with 3rd-party API)](fastapi-httpx)
-- [FastAPI API + AWS S3 (aiobotocore)](fastapi-aws-s3-api)
+- [CRUD API + Redis OM](fastapi-redis-om-crud-api)
+- [CRUD API + Beanie(MongoDB)](fastapi-mongodb-crud-api-1)
+- [CRUD API + Motor(MongoDB)](fastapi-mongodb-crud-api-2)
+- [CRUD API + Httpx (integration with 3rd-party API)](fastapi-httpx)
+- [FastAPI + AWS S3 (aiobotocore)](fastapi-aws-s3-api)
 
 
 ## Notes
@@ -80,7 +80,13 @@ Theory and practice for using FastAPI
   - [Redis OM](github.com/redis/redis-om-python)
 
 - Docs:
-  - [FastCRUD. Advanced Filtering](https://benavlabs.github.io/fastcrud/advanced/filters/)
+  - [SQLAlchemy](https://www.sqlalchemy.org/)
+  - [FastCRUD - robust async CRUD functionality for FastAPI](https://benavlabs.github.io/fastcrud/)
+  - [Beanie - ODM for MongoDB](https://beanie-odm.dev/)
+  - [RediOM Python](https://redis.io/docs/latest/integrate/redisom-for-python/)
+  - [HTTPX - fully featured HTTP client for Python](https://www.python-httpx.org/)
+  - [SQLAdmin - admin interface for SQLAlchemy models](https://aminalaee.github.io/sqladmin/)
+  - [Aiobotocore - async client for](https://aiobotocore.aio-libs.org/en/latest/)
 
 - Youtube:
   - [4 Tips for Building a Production-Ready FastAPI Backend](https://www.youtube.com/watch?v=XlnmN4BfCxw)
