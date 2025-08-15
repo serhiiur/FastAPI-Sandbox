@@ -1,4 +1,7 @@
-## Running
+## About
+The example shows how to integrate and test an API based on FastAPI with [FastAPI-Cache](https://github.com/long2ice/fastapi-cache) extension based on Redis.
+
+## Runnings
 
 ```bash
 # run redis
