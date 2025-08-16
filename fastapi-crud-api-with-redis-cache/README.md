@@ -1,7 +1,7 @@
 ## About
 The example shows how to integrate and test an API based on FastAPI with [FastAPI-Cache](https://github.com/long2ice/fastapi-cache) extension based on Redis.
 
-## Runnings
+## Running
 
 ```bash
 # run redis
@@ -10,5 +10,5 @@ docker run -d --rm --name redis-stack -p 6379:6379 -p 8001:8001 redis/redis-stac
 fastapi dev api.py
 
 # run tests
-pytest -vsx test_api.py
+pytest -vx test_api.py
 ```
