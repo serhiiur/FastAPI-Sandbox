@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -20,9 +21,9 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Settings
-APP_VERSION = "0.0.1"
-DEBUG = True
-DATABASE_URL = "sqlite+aiosqlite:///./test.db"
+VERSION = os.getenv("VERSION", "0.0.1")
+DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "t")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
 
 # Constants
 MIN_USER_NAME_LENGTH = 2
@@ -171,6 +172,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator:
 
   # Set application state
   app.state.logger = logger
+
   yield
 
 
@@ -179,7 +181,7 @@ app = FastAPI(
   description="CRUD Application to Manage Users",
   lifespan=lifespan,
   debug=DEBUG,
-  version=APP_VERSION,
+  version=VERSION,
   exception_handlers={
     NoResultFound: db_not_found_error_handler,
     IntegrityError: db_integrity_error_handler,
@@ -205,5 +207,5 @@ async def health() -> Response:
   """Health-check endpoint."""
   return Response(
     status_code=status.HTTP_204_NO_CONTENT,
-    headers={"x-status": "health"},
+    headers={"x-status": "healthy"},
   )
