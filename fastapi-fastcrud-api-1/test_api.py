@@ -101,7 +101,7 @@ async def get_user(
 async def test_health(client: AsyncClient) -> None:
   resp = await client.get("/health")
   assert resp.status_code == status.HTTP_204_NO_CONTENT
-  assert resp.headers["x-status"] == "health"
+  assert resp.headers["x-status"] == "healthy"
 
 
 @pytest.mark.parametrize("user", [generate_user_info()])
