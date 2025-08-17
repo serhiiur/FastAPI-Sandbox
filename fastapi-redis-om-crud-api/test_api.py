@@ -1,18 +1,17 @@
+import logging  # noqa: I001
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING
 
 import pytest
-from api import CreateUser, UpdateUser, app, get_redis
 from faker import Faker
 from fakeredis import FakeAsyncRedis
 from fastapi import status
-from httpx import ASGITransport
-from httpx import AsyncClient as AC  # noqa: N817
+from httpx import ASGITransport, AsyncClient
 
-if TYPE_CHECKING:
-  from redis import Redis
+from api import CreateUser, UpdateUser, app, get_redis
 
 faker = Faker()
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture(scope="session")
@@ -21,18 +20,21 @@ def anyio_backend() -> str:
   return "asyncio"
 
 
-async def override_get_redis() -> AsyncIterator["Redis"]:
+async def override_get_redis() -> AsyncIterator[FakeAsyncRedis]:
   """Override real redis client."""
   async with FakeAsyncRedis() as client:
     yield client
 
 
 @pytest.fixture(scope="session")
-async def client() -> AsyncIterator[AC]:
+async def client() -> AsyncIterator[AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
+  # Set application state
+  app.state.logger = logging.getLogger(__name__)
+
   transport = ASGITransport(app)
   app.dependency_overrides[get_redis] = override_get_redis
-  async with AC(base_url="http://test", transport=transport) as ac:
+  async with AsyncClient(base_url="http://test", transport=transport) as ac:
     yield ac
 
 
@@ -41,17 +43,14 @@ def generate_user_info() -> CreateUser:
   return CreateUser(name=faker.name(), email=faker.email())
 
 
-pytestmark = pytest.mark.anyio
-
-
-async def test_health(client: AC) -> None:
+async def test_health(client: AsyncClient) -> None:
   resp = await client.get("/health")
-  assert resp.status_code == status.HTTP_200_OK
-  assert resp.json() == {"response": True}
+  assert resp.status_code == status.HTTP_204_NO_CONTENT
+  assert resp.headers["x-status"] == "healthy"
 
 
 @pytest.mark.parametrize("user", [generate_user_info()])
-async def test_create_user(client: AC, user: CreateUser) -> None:
+async def test_create_user(client: AsyncClient, user: CreateUser) -> None:
   resp = await client.post("/users", json=user.model_dump())
   assert resp.status_code == status.HTTP_201_CREATED
   resp_json = resp.json()
@@ -62,13 +61,13 @@ async def test_create_user(client: AC, user: CreateUser) -> None:
 
 
 @pytest.mark.parametrize("user_id", [faker.uuid4()])
-async def test_get_unknown_user(client: AC, user_id: str) -> None:
+async def test_get_unknown_user(client: AsyncClient, user_id: str) -> None:
   resp = await client.get(f"/users/{user_id}")
   assert resp.status_code == status.HTTP_404_NOT_FOUND
 
 
 @pytest.mark.parametrize("user", [generate_user_info()])
-async def test_get_valid_user(client: AC, user: CreateUser) -> None:
+async def test_get_valid_user(client: AsyncClient, user: CreateUser) -> None:
   # Create User
   create_user_resp = await client.post("/users", json=user.model_dump())
   assert create_user_resp.status_code == status.HTTP_201_CREATED
@@ -85,7 +84,7 @@ async def test_get_valid_user(client: AC, user: CreateUser) -> None:
 
 
 @pytest.mark.parametrize("user", [generate_user_info()])
-async def test_delete_user(client: AC, user: CreateUser) -> None:
+async def test_delete_user(client: AsyncClient, user: CreateUser) -> None:
   # Create User
   create_user_resp = await client.post("/users", json=user.model_dump())
   assert create_user_resp.status_code == status.HTTP_201_CREATED
@@ -99,7 +98,9 @@ async def test_delete_user(client: AC, user: CreateUser) -> None:
 
 
 @pytest.mark.parametrize(("user", "user_id"), [(UpdateUser(), faker.uuid4())])
-async def test_update_unknown_user(client: AC, user: UpdateUser, user_id: str) -> None:
+async def test_update_unknown_user(
+  client: AsyncClient, user: UpdateUser, user_id: str
+) -> None:
   resp = await client.patch(f"/users/{user_id}", json=user.model_dump())
   assert resp.status_code == status.HTTP_404_NOT_FOUND
 
@@ -108,7 +109,7 @@ async def test_update_unknown_user(client: AC, user: UpdateUser, user_id: str) -
   ("user", "new_user_name"), [(generate_user_info(), faker.name())]
 )
 async def test_update_user_name(
-  client: AC, user: CreateUser, new_user_name: str
+  client: AsyncClient, user: CreateUser, new_user_name: str
 ) -> None:
   # Create User
   create_user_resp = await client.post("/users", json=user.model_dump())
@@ -134,7 +135,7 @@ async def test_update_user_name(
   ("user", "new_user_email"), [(generate_user_info(), faker.email())]
 )
 async def test_update_user_email(
-  client: AC, user: CreateUser, new_user_email: str
+  client: AsyncClient, user: CreateUser, new_user_email: str
 ) -> None:
   # Create User
   create_user_resp = await client.post("/users", json=user.model_dump())
@@ -161,7 +162,7 @@ async def test_update_user_email(
   [(generate_user_info(), generate_user_info())],
 )
 async def test_update_user(
-  client: AC, user: CreateUser, updated_user: UpdateUser
+  client: AsyncClient, user: CreateUser, updated_user: UpdateUser
 ) -> None:
   # Create User
   create_user_resp = await client.post("/users", json=user.model_dump())
