@@ -1,8 +1,9 @@
 import logging
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
+from functools import lru_cache
+from typing import TypedDict
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response, status
@@ -11,6 +12,7 @@ from fastapi.responses import JSONResponse
 from fastcrud import crud_router
 from fastcrud.exceptions.http_exceptions import DuplicateValueException
 from pydantic import BaseModel, EmailStr, Field
+from pydantic_settings import BaseSettings
 from sqlalchemy import DateTime, String, func
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import (
@@ -20,18 +22,50 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-# Settings
-VERSION = os.getenv("VERSION", "0.0.1")
-DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "t")
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
-
 # Constants
 MIN_USER_NAME_LENGTH = 2
 MAX_USER_NAME_LENGTH = 255
 MAX_USER_EMAIL_LENGTH = 255
 USER_ID_LENGTH = 36
 
-engine = create_async_engine(DATABASE_URL, echo=True)
+
+class FastAPIKwargs(TypedDict):
+  """Kwargs for FastAPI app."""
+
+  title: str
+  description: str
+  version: str
+  debug: bool
+
+
+class Settings(BaseSettings):
+  """API settings."""
+
+  title: str = "Users Management App"
+  description: str = "CRUD Application to Manage Users"
+  version: str = "0.0.1"
+  debug: bool = False
+  database_url: str = "sqlite+aiosqlite:///./test.db"
+
+  @property
+  def fastapi_kwargs(self) -> FastAPIKwargs:
+    """Kwargs for FastAPI app."""
+    return FastAPIKwargs(
+      title=self.title,
+      description=self.description,
+      version=self.version,
+      debug=self.debug,
+    )
+
+
+@lru_cache
+def get_settings() -> Settings:
+  """Return cached project settings."""
+  return Settings()
+
+
+settings = get_settings()
+engine = create_async_engine(settings.database_url, echo=settings.debug)
 async_session = async_sessionmaker(
   engine,
   class_=AsyncSession,
@@ -147,7 +181,7 @@ async def validation_error_handler(
 ) -> JSONResponse:
   """Pydantic validation error handler."""
   logger = get_logger(request)
-  logger.warning("Data Validation Error: %s", e)
+  logger.info("Data Validation Error: %s", e)
   client_message = {"error": e.errors()[0]["msg"]}
   return JSONResponse(client_message, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
@@ -159,7 +193,7 @@ async def unexpected_error_handler(
   """Error handler for all uncaught exceptions."""
   logger = get_logger(request)
   logger.critical("Internal Server Error: %s", e)
-  client_message = {"error": "Internal server error. Try again later"}
+  client_message = {"error": "Service is temporarily unavailable"}
   return JSONResponse(client_message, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
@@ -177,11 +211,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator:
 
 
 app = FastAPI(
-  title="Users Management App",
-  description="CRUD Application to Manage Users",
+  **settings.fastapi_kwargs,
   lifespan=lifespan,
-  debug=DEBUG,
-  version=VERSION,
   exception_handlers={
     NoResultFound: db_not_found_error_handler,
     IntegrityError: db_integrity_error_handler,
