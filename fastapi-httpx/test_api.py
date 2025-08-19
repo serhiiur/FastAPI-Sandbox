@@ -3,11 +3,12 @@ from collections.abc import AsyncIterator  # noqa: I001
 import httpx
 import pytest
 
+from asgi_lifespan import LifespanManager
 from faker import Faker
 from fastapi import status
 from pytest_httpx import HTTPXMock
 
-from api import Post, app, configure_logging, get_http_client
+from api import Post, app, get_http_client
 
 
 faker = Faker()
@@ -24,23 +25,20 @@ def anyio_backend() -> str:
 @pytest.fixture(scope="session")
 async def client() -> AsyncIterator[httpx.AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
-  # Set application state
-  logger = configure_logging()
-  app.state.logger = logger
-
-  transport = httpx.ASGITransport(app)
-  async with (
-    # Client for making requests to the internal API
-    httpx.AsyncClient(base_url="http://test", transport=transport) as api_client,
-    # Client for making requests to the remote API
-    httpx.AsyncClient(base_url="http://test") as http_client,
-  ):
-    app.dependency_overrides[get_http_client] = lambda: http_client
-    yield api_client
+  async with LifespanManager(app) as manager:
+    transport = httpx.ASGITransport(app=manager.app)
+    async with (
+      # Client for making requests to the internal API
+      httpx.AsyncClient(base_url="http://test", transport=transport) as api_client,
+      # Client for making requests to the remote API
+      httpx.AsyncClient(base_url="http://test") as http_client,
+    ):
+      app.dependency_overrides[get_http_client] = lambda: http_client
+      yield api_client
 
 
-def generate_post_info() -> Post:
-  """Generate random info about post."""
+def generate_random_post() -> Post:
+  """Generate a random post."""
   return Post(
     id=faker.pyint(),
     title=faker.sentence(),
@@ -55,7 +53,7 @@ async def test_health(client: httpx.AsyncClient) -> None:
   assert resp.headers["x-status"] == "ok"
 
 
-@pytest.mark.parametrize("post", [generate_post_info()])
+@pytest.mark.parametrize("post", [generate_random_post()])
 async def test_fetch_post(
   httpx_mock: HTTPXMock,
   client: httpx.AsyncClient,
@@ -68,7 +66,7 @@ async def test_fetch_post(
   assert mock_post == resp.json()
 
 
-@pytest.mark.parametrize("posts", [[generate_post_info()]])
+@pytest.mark.parametrize("posts", [[generate_random_post()]])
 async def test_fetch_all_posts(
   httpx_mock: HTTPXMock,
   client: httpx.AsyncClient,
@@ -112,7 +110,7 @@ async def test_fetch_unknown_post(
   assert resp.json() == {"error": "Post not found"}
 
 
-@pytest.mark.parametrize("post", [generate_post_info()])
+@pytest.mark.parametrize("post", [generate_random_post()])
 async def test_create_post(
   httpx_mock: HTTPXMock,
   client: httpx.AsyncClient,
@@ -137,7 +135,7 @@ async def test_delete_post(
   assert resp.content == b""
 
 
-@pytest.mark.parametrize("post", [generate_post_info()])
+@pytest.mark.parametrize("post", [generate_random_post()])
 async def test_update_post(
   httpx_mock: HTTPXMock,
   client: httpx.AsyncClient,
