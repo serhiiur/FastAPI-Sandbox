@@ -3,11 +3,10 @@ from collections.abc import AsyncIterator
 
 import pytest
 from faker import Faker
-from fakeredis import FakeAsyncRedis
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
 
-from api import CreateUser, UpdateUser, app, get_redis
+from api import CreateUser, UpdateUser, app
 
 faker = Faker()
 
@@ -20,12 +19,6 @@ def anyio_backend() -> str:
   return "asyncio"
 
 
-async def override_get_redis() -> AsyncIterator[FakeAsyncRedis]:
-  """Override real redis client."""
-  async with FakeAsyncRedis() as client:
-    yield client
-
-
 @pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
@@ -33,7 +26,6 @@ async def client() -> AsyncIterator[AsyncClient]:
   app.state.logger = logging.getLogger(__name__)
 
   transport = ASGITransport(app)
-  app.dependency_overrides[get_redis] = override_get_redis
   async with AsyncClient(base_url="http://test", transport=transport) as ac:
     yield ac
 
@@ -46,7 +38,7 @@ def generate_user_info() -> CreateUser:
 async def test_health(client: AsyncClient) -> None:
   resp = await client.get("/health")
   assert resp.status_code == status.HTTP_204_NO_CONTENT
-  assert resp.headers["x-status"] == "healthy"
+  assert resp.headers["x-status"] == "ok"
 
 
 @pytest.mark.parametrize("user", [generate_user_info()])
