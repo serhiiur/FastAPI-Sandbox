@@ -40,6 +40,7 @@ class LoggingKwargs(TypedDict):
 class Settings(BaseSettings):
   """API settings."""
 
+  # FastAPI settings
   title: str = "Posts Management API"
   description: str = "API to manage Posts from a 3rd-party API"
   version: str = "0.0.1"
