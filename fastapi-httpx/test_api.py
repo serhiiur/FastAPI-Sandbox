@@ -3,10 +3,14 @@ from collections.abc import AsyncIterator  # noqa: I001
 import httpx
 import pytest
 
+from faker import Faker
 from fastapi import status
 from pytest_httpx import HTTPXMock
 
-from api import Post, app, get_http_client
+from api import Post, app, configure_logging, get_http_client
+
+
+faker = Faker()
 
 pytestmark = pytest.mark.anyio
 
@@ -20,37 +24,61 @@ def anyio_backend() -> str:
 @pytest.fixture(scope="session")
 async def client() -> AsyncIterator[httpx.AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
+  # Set application state
+  logger = configure_logging()
+  app.state.logger = logger
+
   transport = httpx.ASGITransport(app)
   async with (
+    # Client for making requests to the internal API
     httpx.AsyncClient(base_url="http://test", transport=transport) as api_client,
+    # Client for making requests to the remote API
     httpx.AsyncClient(base_url="http://test") as http_client,
   ):
     app.dependency_overrides[get_http_client] = lambda: http_client
     yield api_client
 
 
+def generate_post_info() -> Post:
+  """Generate random info about post."""
+  return Post(
+    id=faker.pyint(),
+    title=faker.sentence(),
+    body=faker.text(),
+    userId=faker.pyint(),
+  )
+
+
 async def test_health(client: httpx.AsyncClient) -> None:
   resp = await client.get("/health")
   assert resp.status_code == status.HTTP_204_NO_CONTENT
-  assert resp.headers["x-status"] == "health"
+  assert resp.headers["x-status"] == "ok"
 
 
-async def test_get_post(httpx_mock: HTTPXMock, client: httpx.AsyncClient) -> None:
-  """Test getting a post by ID."""
-  post = Post.model_config["json_schema_extra"]["example"]
-  httpx_mock.add_response(json=post)
-  resp = await client.get("/posts/1")
+@pytest.mark.parametrize("post", [generate_post_info()])
+async def test_fetch_post(
+  httpx_mock: HTTPXMock,
+  client: httpx.AsyncClient,
+  post: Post,
+) -> None:
+  mock_post = post.model_dump(by_alias=True)
+  httpx_mock.add_response(json=mock_post)
+  resp = await client.get(f"/posts/{post.id}")
   assert resp.status_code == status.HTTP_200_OK
-  assert resp.json() == post
+  assert mock_post == resp.json()
 
 
-async def test_get_all_posts(httpx_mock: HTTPXMock, client: httpx.AsyncClient) -> None:
-  """Test getting all posts."""
-  posts = [Post.model_config["json_schema_extra"]["example"]]
-  httpx_mock.add_response(json=posts)
+@pytest.mark.parametrize("posts", [[generate_post_info()]])
+async def test_fetch_all_posts(
+  httpx_mock: HTTPXMock,
+  client: httpx.AsyncClient,
+  posts: list[Post],
+) -> None:
+  mock_posts = [post.model_dump(by_alias=True) for post in posts]
+  httpx_mock.add_response(json=mock_posts)
   resp = await client.get("/posts")
   assert resp.status_code == status.HTTP_200_OK
-  assert resp.json() == posts
+  assert mock_posts == resp.json()
 
 
 # async def test_get_unknown_post(
@@ -65,44 +93,59 @@ async def test_get_all_posts(httpx_mock: HTTPXMock, client: httpx.AsyncClient) -
 #   assert resp.json() == {"API Error": "Post not found"}
 
 
-async def test_get_unknown_post(
-  httpx_mock: HTTPXMock, client: httpx.AsyncClient
+@pytest.mark.parametrize("post_id", [-1])
+async def test_fetch_unknown_post(
+  httpx_mock: HTTPXMock,
+  client: httpx.AsyncClient,
+  post_id: int,
 ) -> None:
-  """Test getting a post by ID that does not exist."""
+  endpoint = f"/posts/{post_id}"
   httpx_mock.add_exception(
     httpx.HTTPStatusError(
       "",
-      request=httpx.Request("GET", "/posts/999"),
+      request=httpx.Request("GET", endpoint),
       response=httpx.Response(404, json={"error": "Post not found"}),
     )
   )
-  resp = await client.get("/posts/999")
+  resp = await client.get(endpoint)
   assert resp.status_code == status.HTTP_404_NOT_FOUND
-  assert resp.json() == {"API Error": "Post not found"}
+  assert resp.json() == {"error": "Post not found"}
 
 
-async def test_create_post(httpx_mock: HTTPXMock, client: httpx.AsyncClient) -> None:
-  """Test creating a new post."""
-  post = Post.model_config["json_schema_extra"]["example"]
-  httpx_mock.add_response(json=post, status_code=status.HTTP_201_CREATED)
-  resp = await client.post("/posts", json=post)
+@pytest.mark.parametrize("post", [generate_post_info()])
+async def test_create_post(
+  httpx_mock: HTTPXMock,
+  client: httpx.AsyncClient,
+  post: Post,
+) -> None:
+  mock_post = post.model_dump(by_alias=True)
+  httpx_mock.add_response(json=mock_post, status_code=status.HTTP_201_CREATED)
+  resp = await client.post("/posts", json=mock_post)
   assert resp.status_code == status.HTTP_201_CREATED
-  assert resp.json() == post
+  assert mock_post == resp.json()
 
 
-async def test_delete_post(httpx_mock: HTTPXMock, client: httpx.AsyncClient) -> None:
-  """Test deleting a post by ID."""
+@pytest.mark.parametrize("post_id", [1])
+async def test_delete_post(
+  httpx_mock: HTTPXMock,
+  client: httpx.AsyncClient,
+  post_id: int,
+) -> None:
   httpx_mock.add_response(status_code=status.HTTP_204_NO_CONTENT)
-  resp = await client.delete("/posts/1")
+  resp = await client.delete(f"/posts/{post_id}")
   assert resp.status_code == status.HTTP_204_NO_CONTENT
   assert resp.content == b""
 
 
-async def test_update_post(httpx_mock: HTTPXMock, client: httpx.AsyncClient) -> None:
-  """Test updating an existing post."""
-  updated_post = Post.model_config["json_schema_extra"]["example"]
-  updated_post["title"] = "Updated Title"
-  httpx_mock.add_response(json=updated_post)
-  resp = await client.put("/posts/1", json=updated_post)
+@pytest.mark.parametrize("post", [generate_post_info()])
+async def test_update_post(
+  httpx_mock: HTTPXMock,
+  client: httpx.AsyncClient,
+  post: Post,
+) -> None:
+  post.title = faker.sentence()
+  mock_post = post.model_dump(by_alias=True)
+  httpx_mock.add_response(json=mock_post)
+  resp = await client.put(f"/posts/{post.id}", json=mock_post)
   assert resp.status_code == status.HTTP_200_OK
-  assert resp.json() == updated_post
+  assert mock_post == resp.json()
