@@ -2,7 +2,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Any, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict, cast
 
 import httpx
 from fastapi import Depends, FastAPI, Path, Request, Response, status
@@ -35,6 +35,7 @@ class LoggingKwargs(TypedDict):
 
   level: int
   format: str
+  datefmt: str
 
 
 class Settings(BaseSettings):
@@ -50,6 +51,7 @@ class Settings(BaseSettings):
   log_name: str = __name__
   log_level: int = logging.INFO
   log_format: str = "%(levelname)s - %(name)s - %(asctime)s - %(message)s"
+  log_datefmt: str = "%Y-%m-%d %H:%M:%S"
 
   # JSONPlaceholder API settings
   posts_api_url: str = "https://jsonplaceholder.typicode.com/"
@@ -81,6 +83,7 @@ class Settings(BaseSettings):
     return LoggingKwargs(
       level=settings.log_level,
       format=self.log_format,
+      datefmt=self.log_datefmt,
     )
 
 
@@ -126,17 +129,12 @@ class Post(CreatePost):
   )
 
 
-def get_logger(request: Request) -> "Logger":
-  """Return logger object, initialized in the lifespan."""
-  return request.app.state.logger
-
-
 async def http_error_handler(
   request: Request,
   e: httpx.HTTPStatusError,
 ) -> JSONResponse:
   """Httpx error handler."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.state.logger)
   if e.response.status_code == status.HTTP_404_NOT_FOUND:
     # Handle 404 Not Found errors specifically
     error = e.response.json().get("error", "Post not found")
@@ -163,21 +161,24 @@ class AsyncClient(httpx.AsyncClient):
     return response
 
 
+class AppState(TypedDict):
+  """State of the main app."""
+
+  logger: "Logger"
+  http_client: AsyncClient
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator:
-  """Initialize the application state with an HTTP client."""
+async def lifespan(_: FastAPI) -> AsyncIterator[AppState]:
+  """Init app state objects, including logger and HTTP client."""
   logger = configure_logging()
-  http_client = AsyncClient(**settings.http_kwargs)
-  # Set application state
-  app.state.logger = logger
-  app.state.http_client = http_client
-  yield
-  await http_client.aclose()
+  async with AsyncClient(**settings.http_kwargs) as http_client:
+    yield AppState(logger=logger, http_client=http_client)
 
 
 async def get_http_client(request: Request) -> AsyncClient:
   """Get the HTTP client from the application state."""
-  return request.app.state.http_client
+  return request.state.http_client
 
 
 app = FastAPI(
@@ -193,11 +194,8 @@ HttpClient = Annotated[AsyncClient, Depends(get_http_client)]
 
 
 @app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
-async def health(
-  logger: Annotated["Logger", Depends(get_logger)],
-) -> Response:
+async def health() -> Response:
   """Health-check endpoint."""
-  logger.info("API healthcheck - OK")
   return Response(
     status_code=status.HTTP_204_NO_CONTENT,
     headers={"x-status": "ok"},
