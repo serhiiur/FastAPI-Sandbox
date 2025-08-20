@@ -1,0 +1,267 @@
+import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime
+from functools import lru_cache
+from typing import TYPE_CHECKING, Annotated, Final, TypedDict
+from uuid import uuid4
+
+from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastcrud import crud_router
+from fastcrud.exceptions.http_exceptions import DuplicateValueException
+from pydantic import BaseModel, EmailStr, Field
+from pydantic_settings import BaseSettings
+from sqlalchemy import DateTime, String, func
+from sqlalchemy.exc import IntegrityError, NoResultFound
+from sqlalchemy.ext.asyncio import (
+  AsyncSession,
+  async_sessionmaker,
+  create_async_engine,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+if TYPE_CHECKING:
+  from logging import Logger
+
+# Constants
+MIN_USER_NAME_LENGTH: Final[int] = 2
+MAX_USER_NAME_LENGTH: Final[int] = 255
+MAX_USER_EMAIL_LENGTH: Final[int] = 255
+USER_ID_LENGTH: Final[int] = 36
+
+
+class FastAPIKwargs(TypedDict):
+  """Kwargs for FastAPI app."""
+
+  title: str
+  description: str
+  version: str
+  debug: bool
+
+
+class LoggingKwargs(TypedDict):
+  """Kwargs for logger config."""
+
+  level: int
+  format: str
+
+
+class Settings(BaseSettings):
+  """API settings."""
+
+  # FastAPI settings
+  title: str = "Users Management App"
+  description: str = "CRUD Application to Manage Users"
+  version: str = "0.0.1"
+  debug: bool = False
+
+  # Logging settings
+  log_name: str = __name__
+  log_level: int = logging.INFO
+  log_format: str = "%(levelname)s - %(name)s - %(asctime)s - %(message)s"
+
+  # Database settings
+  database_url: str = "sqlite+aiosqlite:///./test.db"
+
+  @property
+  def fastapi_kwargs(self) -> FastAPIKwargs:
+    """Kwargs for FastAPI app."""
+    return FastAPIKwargs(
+      title=self.title,
+      description=self.description,
+      version=self.version,
+      debug=self.debug,
+    )
+
+  @property
+  def logging_kwargs(self) -> LoggingKwargs:
+    """Kwargs for logger config."""
+    return LoggingKwargs(
+      level=settings.log_level,
+      format=self.log_format,
+    )
+
+
+@lru_cache
+def get_settings() -> Settings:
+  """Return cached project settings."""
+  return Settings()
+
+
+settings = get_settings()
+engine = create_async_engine(settings.database_url, echo=settings.debug)
+async_session = async_sessionmaker(
+  engine,
+  class_=AsyncSession,
+  expire_on_commit=False,
+)
+
+
+def configure_logging() -> "Logger":
+  """Configure app logging and return logger object."""
+  logging.basicConfig(**settings.logging_kwargs)
+  return logging.getLogger(settings.log_name)
+
+
+class Base(DeclarativeBase):
+  """Base declarative database class."""
+
+
+class User(Base):
+  """Database model to represent a user."""
+
+  __tablename__ = "users"
+  id: Mapped[str] = mapped_column(
+    String(USER_ID_LENGTH),
+    primary_key=True,
+    default=lambda: str(uuid4()),
+  )
+  name: Mapped[str] = mapped_column(
+    String(MAX_USER_NAME_LENGTH),
+    nullable=False,
+  )
+  email: Mapped[str] = mapped_column(
+    String(MAX_USER_EMAIL_LENGTH),
+    nullable=False,
+    unique=True,
+    index=True,
+  )
+  created_at: Mapped[datetime] = mapped_column(
+    DateTime(timezone=True),
+    server_default=func.now(),
+  )
+  updated_at: Mapped[datetime] = mapped_column(
+    DateTime(timezone=True),
+    server_default=func.now(),
+    onupdate=func.now(),
+  )
+
+
+class CreateUser(BaseModel):
+  """Schema to create a user."""
+
+  name: str = Field(
+    description="Name of the user",
+    min_length=MIN_USER_NAME_LENGTH,
+    max_length=MAX_USER_NAME_LENGTH,
+  )
+  email: EmailStr = Field(description="Email of the user")
+
+
+class UpdateUser(BaseModel):
+  """Schema to update a user."""
+
+  name: str | None = Field(
+    default=None,
+    description="New name of the user",
+    min_length=MIN_USER_NAME_LENGTH,
+    max_length=MAX_USER_NAME_LENGTH,
+  )
+  email: EmailStr | None = Field(
+    default=None,
+    description="New email of the user",
+  )
+
+
+async def get_session() -> AsyncIterator[AsyncSession]:
+  """Yield a database session to be used as a dependency."""
+  async with async_session() as session:
+    yield session
+
+
+def get_logger(request: Request) -> "Logger":
+  """Return logger object, initialized in the lifespan."""
+  return request.app.state.logger
+
+
+async def db_not_found_error_handler(
+  request: Request,
+  e: NoResultFound,
+) -> JSONResponse:
+  """Database. Not found error handler."""
+  logger = get_logger(request)
+  logger.info("Database Not Found Error: %s", e)
+  client_message = {"error": "User not found"}
+  return JSONResponse(client_message, status.HTTP_404_NOT_FOUND)
+
+
+async def db_integrity_error_handler(
+  request: Request,
+  e: IntegrityError | DuplicateValueException,
+) -> JSONResponse:
+  """Database. Integrity error handler."""
+  logger = get_logger(request)
+  logger.warning("Database Integrity Error: %s", e)
+  client_message = {"error": "User already exists"}
+  return JSONResponse(client_message, status.HTTP_409_CONFLICT)
+
+
+async def validation_error_handler(
+  request: Request,
+  e: RequestValidationError,
+) -> JSONResponse:
+  """Pydantic validation error handler."""
+  logger = get_logger(request)
+  logger.info("Data Validation Error: %s", e)
+  client_message = {"error": e.errors()[0]["msg"]}
+  return JSONResponse(client_message, status.HTTP_422_UNPROCESSABLE_ENTITY)
+
+
+async def unexpected_error_handler(
+  request: Request,
+  e: Exception,
+) -> JSONResponse:
+  """Error handler for all uncaught exceptions."""
+  logger = get_logger(request)
+  logger.critical("Internal Server Error: %s", e)
+  client_message = {"error": "Service is temporarily unavailable"}
+  return JSONResponse(client_message, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator:
+  """Run database migrations and init application state."""
+  logger = configure_logging()
+  async with engine.begin() as conn:
+    await conn.run_sync(Base.metadata.create_all)
+  # Set application state
+  app.state.logger = logger
+  yield
+  await engine.dispose()
+
+
+app = FastAPI(
+  **settings.fastapi_kwargs,
+  lifespan=lifespan,
+  exception_handlers={
+    NoResultFound: db_not_found_error_handler,
+    IntegrityError: db_integrity_error_handler,
+    DuplicateValueException: db_integrity_error_handler,
+    RequestValidationError: validation_error_handler,
+    Exception: unexpected_error_handler,
+  },
+)
+
+user_router = crud_router(
+  session=get_session,
+  model=User,
+  create_schema=CreateUser,
+  update_schema=UpdateUser,
+  path="/users",
+  tags=["users"],
+)
+app.include_router(user_router)
+
+
+@app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
+async def health(
+  logger: Annotated["Logger", Depends(get_logger)],
+) -> Response:
+  """Health-check endpoint."""
+  logger.info("API healthcheck - OK")
+  return Response(
+    status_code=status.HTTP_204_NO_CONTENT,
+    headers={"x-status": "ok"},
+  )
