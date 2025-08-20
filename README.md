@@ -1,5 +1,5 @@
 ## Introduction
-Theory and practice for using FastAPI
+This provides a collection of snippets and implementations of APIs based on FastAPI.
 
 
 ## Navigation
@@ -7,7 +7,7 @@ Theory and practice for using FastAPI
 - [Upload one and multiple files synchronously and asynchronously](file-upload)
 - [Running blocking synchronous functions in the custom and Starlette's Thread Pool Executor](fastapi-threadpool-executor)
 - [API with protected routes](fastapi-protected-routes)
-- [FastAPI + Docker + cAdvisort](fastapi-docker-cAdvisor)
+- [FastAPI + Docker + cAdvisor](fastapi-docker-cAdvisor)
 - [FastCRUD + SQLAlchemy](fastapi-fastcrud-api-1)
 - [FastCRUD + SQLModel](fastapi-fastcrud-api-2)
 - [FastCRUD + SQLModel (advanced)](fastapi-fastcrud-api-3)
@@ -78,6 +78,7 @@ Theory and practice for using FastAPI
   - [FastAPI boilerplate (SQLmodel version)](https://github.com/benavlabs/SQLModel-boilerplate/tree/main)
   - [FastAPI Cache. Tool to cache FastAPI endpoint and function results](https://github.com/long2ice/fastapi-cache)
   - [Redis OM](github.com/redis/redis-om-python)
+  - [101 FastAPI Tips by The FastAPI Expert](https://github.com/Kludex/fastapi-tips)
 
 - Docs:
   - [SQLAlchemy](https://www.sqlalchemy.org/)
