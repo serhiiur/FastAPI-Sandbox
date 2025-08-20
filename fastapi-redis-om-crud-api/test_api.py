@@ -1,16 +1,16 @@
-import logging  # noqa: I001
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator  # noqa: I001
 
 import pytest
 from faker import Faker
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
 
-from api import CreateUser, UpdateUser, app
+from api import CreateUser, UpdateUser, app, configure_logging
 
-faker = Faker()
 
 pytestmark = pytest.mark.anyio
+
+faker = Faker()
 
 
 @pytest.fixture(scope="session")
@@ -22,9 +22,7 @@ def anyio_backend() -> str:
 @pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
-  # Set application state
-  app.state.logger = logging.getLogger(__name__)
-
+  app.state.logger = configure_logging()
   transport = ASGITransport(app)
   async with AsyncClient(base_url="http://test", transport=transport) as ac:
     yield ac
