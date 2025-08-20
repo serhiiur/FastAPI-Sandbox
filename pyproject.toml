@@ -44,7 +44,7 @@ warn_unused_ignores = true
 warn_unreachable = true
 exclude = [
   "__pycache__",
-  ".venv",
   ".pytest_cache",
   ".ruff_cache",
+  "*/.venv",
 ]
