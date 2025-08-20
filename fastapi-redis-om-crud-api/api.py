@@ -3,11 +3,11 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Final, TypedDict
+from typing import TYPE_CHECKING, Annotated, Final, TypedDict, cast
 
 from aredis_om import Field, JsonModel, Migrator
 from aredis_om.model.model import NotFoundError
-from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import APIRouter, FastAPI, Path, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, EmailStr
 from pydantic_settings import BaseSettings
@@ -34,6 +34,7 @@ class LoggingKwargs(TypedDict):
 
   level: int
   format: str
+  datefmt: str
 
 
 class Settings(BaseSettings):
@@ -49,8 +50,9 @@ class Settings(BaseSettings):
   log_name: str = __name__
   log_level: int = logging.INFO
   log_format: str = "%(levelname)s - %(name)s - %(asctime)s - %(message)s"
+  log_datefmt: str = "%Y-%m-%d %H:%M:%S"
 
-  # Other settings
+  # Redis settings
   redis_url: str = "redis://localhost:6379/0"
 
   @property
@@ -69,6 +71,7 @@ class Settings(BaseSettings):
     return LoggingKwargs(
       level=settings.log_level,
       format=self.log_format,
+      datefmt=self.log_datefmt,
     )
 
 
@@ -129,17 +132,12 @@ class User(CreateUser, JsonModel):
   )
 
 
-def get_logger(request: Request) -> "Logger":
-  """Return logger object, initialized in the lifespan."""
-  return request.app.state.logger
-
-
 async def user_not_found_error_handler(
   request: Request,
   e: NotFoundError,
 ) -> JSONResponse:
   """User not found error handler."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.app.state.logger)
   logger.info("Database Not Found Error: %s", e)
   client_message = {"error": "User not found"}
   return JSONResponse(client_message, status.HTTP_404_NOT_FOUND)
@@ -150,7 +148,7 @@ async def unexpected_error_handler(
   e: Exception,
 ) -> JSONResponse:
   """Error handler for all uncaught exceptions."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.app.state.logger)
   logger.critical("Internal Server Error: %s", e)
   client_message = {"error": "Service is temporarily unavailable"}
   return JSONResponse(client_message, status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -175,85 +173,58 @@ app = FastAPI(
     Exception: unexpected_error_handler,
   },
 )
+router = APIRouter(prefix="/users", tags=["users"])
 
 # https://fastapi.tiangolo.com/tutorial/dependencies/#share-annotated-dependencies
-UserID = Annotated[str, "User ID in the database"]
-
-responses = {
-  404: {
-    "description": "User not found in the database",
-    "content": {"application/json": {"example": {"error": "User not found"}}},
-  },
-  422: {
-    "description": "Data validation error",
-    "content": {
-      "application/json": {"example": {"error": "Value is not a valid email address"}}
-    },
-  },
-}
+UserID = Annotated[str, Path(alias="userId")]
 
 
 @app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
-async def health(
-  logger: Annotated["Logger", Depends(get_logger)],
-) -> Response:
+async def health() -> Response:
   """Health-check endpoint."""
-  logger.info("API healthcheck - OK")
   return Response(
     status_code=status.HTTP_204_NO_CONTENT,
     headers={"x-status": "ok"},
   )
 
 
-@app.get(
-  "/users/{pk}",
-  responses={404: responses[404], 422: responses[422]},
-  tags=["users"],
+@router.get(
+  "/{userId}",  # noqa: FAST003
 )
-async def get_user(pk: UserID) -> User:
+async def get_user(user_id: UserID) -> User:
   """Get information about user from the database."""
-  return await User.get(pk)
+  return await User.get(user_id)
 
 
-@app.get(
-  "/users",
-  responses={404: responses[404], 422: responses[422]},
-  tags=["users"],
-)
+@router.get("")
 async def get_users(offset: int = 0, limit: int = 10) -> list[User]:
   """Get information about users from the database."""
   return await User.find().sort_by("-created_at").page(offset, limit)
 
 
-@app.post(
-  "/users",
-  status_code=status.HTTP_201_CREATED,
-  responses={422: responses[422]},
-  tags=["users"],
-)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def add_user(user: CreateUser) -> User:
   """Add a new user to the database."""
   return await User.model_validate(user).save()
 
 
-@app.delete(
-  "/users/{pk}",
+@router.delete(
+  "/{userId}",  # noqa: FAST003
   status_code=status.HTTP_204_NO_CONTENT,
-  responses={404: responses[404], 422: responses[422]},
-  tags=["users"],
 )
-async def delete_user(pk: UserID) -> None:
+async def delete_user(user_id: UserID) -> None:
   """Delete a user from the database."""
-  await User.delete(pk)
+  await User.delete(user_id)
 
 
-@app.patch(
-  "/users/{pk}",
-  responses=dict(responses.items()),
-  tags=["users"],
+@router.patch(
+  "/{userId}",  # noqa: FAST003
 )
-async def update_user(pk: UserID, user: UpdateUser) -> User:
+async def update_user(user_id: UserID, user: UpdateUser) -> User:
   """Update existing user in the database."""
-  db_user = await User.get(pk)
+  db_user = await User.get(user_id)
   await db_user.update(**user.model_dump(exclude_defaults=True))
   return db_user
+
+
+app.include_router(router)
