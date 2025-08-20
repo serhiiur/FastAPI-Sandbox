@@ -26,7 +26,7 @@ def anyio_backend() -> str:
 async def client() -> AsyncIterator[httpx.AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
   async with LifespanManager(app) as manager:
-    transport = httpx.ASGITransport(app=manager.app)
+    transport = httpx.ASGITransport(manager.app)
     async with (
       # Client for making requests to the internal API
       httpx.AsyncClient(base_url="http://test", transport=transport) as api_client,
