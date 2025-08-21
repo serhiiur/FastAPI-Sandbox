@@ -5,10 +5,10 @@ This provides a collection of snippets and implementations of APIs based on Fast
 ## Navigation
 
 Snippets:
-- [Upload one and multiple files synchronously and asynchronously](file-upload)
-- [Running blocking synchronous functions in the custom and Starlette's Thread Pool Executor](fastapi-threadpool-executor)
+- [Upload files synchronously and asynchronously](file-upload)
+- [Running synchronous functions in async endpoints](fastapi-threadpool-executor)
 - [API with protected routes](fastapi-protected-routes)
-- [Active Threads Check](check_active_threads)
+- [Monitor active threads when using synchronous dependencies](check_active_threads)
 
 APIs:
 - [FastAPI + Docker + cAdvisor](fastapi-docker-cAdvisor)
