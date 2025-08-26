@@ -17,11 +17,12 @@ APIs:
 - [FastCRUD + SQLModel (custom endpoints)](fastapi-fastcrud-custom-endpoints-api)
 - [FastCRUD + SQLModel + FastAPI Cache(Redis)](fastapi-crud-api-with-redis-cache)
 - [FastCRUD + SQLModel + SQLAdmin](fastapi-fastcrud-sqladmin-api)
-- [CRUD API + Redis OM](fastapi-redis-om-crud-api)
-- [CRUD API + Beanie(MongoDB)](fastapi-mongodb-crud-api-1)
-- [CRUD API + Motor(MongoDB)](fastapi-mongodb-crud-api-2)
-- [CRUD API + Httpx (integration with 3rd-party API)](fastapi-httpx)
+- [FastAPI + Redis OM CRUD API](fastapi-redis-om-crud-api)
+- [FastAPI + Beanie(MongoDB) CRUD API](fastapi-mongodb-crud-api-1)
+- [FastAPI + Motor(MongoDB) CRUD API](fastapi-mongodb-crud-api-2)
+- [FastAPI + Httpx (integration with 3rd-party API) CRUD API](fastapi-httpx)
 - [FastAPI + AWS S3 (aiobotocore)](fastapi-aws-s3-api)
+- [FastAPI + GraphQL(Graphene) CRUD API](graphql-graphene-crud-api)
 
 
 ## Notes
@@ -90,6 +91,7 @@ APIs:
   - [HTTPX - fully featured HTTP client for Python](https://www.python-httpx.org/)
   - [SQLAdmin - admin interface for SQLAlchemy models](https://aminalaee.github.io/sqladmin/)
   - [Aiobotocore - async client for](https://aiobotocore.aio-libs.org/en/latest/)
+  - [Graphene](https://docs.graphene-python.org/en/latest/)
 
 - Youtube:
   - [4 Tips for Building a Production-Ready FastAPI Backend](https://www.youtube.com/watch?v=XlnmN4BfCxw)
