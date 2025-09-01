@@ -15,7 +15,6 @@ from api import (
   app,
   Base,
   CreateUser,
-  configure_logging,
   get_session,
   settings,
   MAX_USER_NAME_LENGTH,
@@ -35,8 +34,14 @@ faker = Faker()
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(scope="session")
+def anyio_backend() -> str:
+  """Backend (asyncio) for pytest to run async tests."""
+  return "asyncio"
+
+
 @pytest.fixture(scope="session", autouse=True)
-async def migrate_db() -> AsyncIterator:
+async def migrate_db() -> AsyncIterator[None]:
   """Create and drop test test db on startup and shutdown."""
   async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)
@@ -52,15 +57,8 @@ async def override_get_session() -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture(scope="session")
-def anyio_backend() -> str:
-  """Backend (asyncio) for pytest to run async tests."""
-  return "asyncio"
-
-
-@pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
-  app.state.logger = configure_logging()
   app.dependency_overrides[get_session] = override_get_session
   transport = ASGITransport(app)
   async with AsyncClient(base_url="http://test", transport=transport) as ac:
@@ -69,7 +67,7 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 def generate_user_info() -> CreateUser:
   """Generate random info about user to be created."""
-  return CreateUser(name=faker.name(), email=faker.email())
+  return CreateUser.model_construct(name=faker.name(), email=faker.email())
 
 
 async def create_user(
