@@ -69,7 +69,7 @@ class Settings(BaseSettings):
   def logging_kwargs(self) -> LoggingKwargs:
     """Kwargs for logger config."""
     return LoggingKwargs(
-      level=settings.log_level,
+      level=self.log_level,
       format=self.log_format,
       datefmt=self.log_datefmt,
     )
@@ -155,7 +155,7 @@ async def unexpected_error_handler(
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
   """Run Redis OM migrations and init application state."""
   logger = configure_logging()
   # Run migrations for running queries
