@@ -1,16 +1,22 @@
+import logging  # noqa: I001
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 import pytest
 from aiobotocore.session import get_session
 from aiobotocore.stub import AioStubber
-from api import app, get_s3_client
+
 from faker import Faker
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
 
+from api import app, get_s3_client
+
 if TYPE_CHECKING:
   from types_aiobotocore_s3.client import S3Client
+
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture(scope="session")
@@ -25,7 +31,7 @@ def faker() -> Faker:
 
   NOTE: pytest's faker fixture is session-scoped, but we
         need a function-scoped fixture to have a new instance
-        of Faker class for each test.
+        of Faker for each test.
   """
   return Faker()
 
@@ -41,10 +47,15 @@ async def s3_client() -> AsyncIterator["S3Client"]:
 @pytest.fixture(scope="session")
 async def client(s3_client: "S3Client") -> AsyncIterator[AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
-  app.dependency_overrides[get_s3_client] = lambda: s3_client
+
+  async def override_get_s3_client() -> "S3Client":
+    return s3_client
+
+  # here we use a different logger specifically for testings
+  app.state.logger = logging.getLogger(__name__)
+  app.dependency_overrides[get_s3_client] = override_get_s3_client
   transport = ASGITransport(app)
   async with AsyncClient(base_url="http://test", transport=transport) as ac:
-    ac.s3_client = s3_client  # type: ignore
     yield ac
 
 
@@ -60,35 +71,39 @@ def s3_object_name(faker: Faker) -> str:
   return faker.file_name()
 
 
-@pytest.mark.anyio
 async def test_health(client: AsyncClient) -> None:
   resp = await client.get("/health")
   assert resp.status_code == status.HTTP_204_NO_CONTENT
   assert resp.headers["x-status"] == "health"
 
 
-@pytest.mark.anyio
 async def test_s3_list_objects(
-  client: AsyncClient, s3_bucket_name: str, s3_object_name: str
+  client: AsyncClient,
+  s3_client: "S3Client",
+  s3_bucket_name: str,
+  s3_object_name: str,
 ) -> None:
   s3_list_objects_resp = {"Name": s3_bucket_name, "Contents": [{"Key": s3_object_name}]}
   s3_list_objects_params = {"Bucket": s3_bucket_name}
-  with AioStubber(client.s3_client) as stubber:
+  with AioStubber(s3_client) as stubber:
     stubber.add_response(
       "list_objects_v2", s3_list_objects_resp, s3_list_objects_params
     )
     resp = await client.get(f"/bucket/objects/list/{s3_bucket_name}")
   assert resp.status_code == status.HTTP_200_OK
-  resp_json: dict = resp.json()
-  assert resp_json.get("bucket") == s3_bucket_name
-  assert resp_json.get("count") == 1
-  assert s3_object_name in resp_json.get("objects", [])
+  resp_json = resp.json()
+  assert resp_json["bucket"] == s3_bucket_name
+  assert resp_json["count"] == 1
+  assert s3_object_name in resp_json["objects"]
 
 
-@pytest.mark.anyio
-async def test_bucket_doesnt_exist(client: AsyncClient, s3_bucket_name: str) -> None:
+async def test_bucket_doesnt_exist(
+  s3_client: "S3Client",
+  client: AsyncClient,
+  s3_bucket_name: str,
+) -> None:
   service_message = "The specified bucket does not exist."
-  with AioStubber(client.s3_client) as stubber:
+  with AioStubber(s3_client) as stubber:
     stubber.add_client_error(
       method="list_objects_v2",
       service_error_code="NoSuchBucket",
