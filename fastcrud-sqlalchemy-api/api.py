@@ -3,10 +3,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Final, TypedDict
+from typing import TYPE_CHECKING, Final, TypedDict, cast
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastcrud import crud_router
@@ -46,6 +46,7 @@ class LoggingKwargs(TypedDict):
 
   level: int
   format: str
+  datefmt: str
 
 
 class Settings(BaseSettings):
@@ -61,9 +62,11 @@ class Settings(BaseSettings):
   log_name: str = __name__
   log_level: int = logging.INFO
   log_format: str = "%(levelname)s - %(name)s - %(asctime)s - %(message)s"
+  log_datefmt: str = "%Y-%m-%d %H:%M:%S"
 
   # Database settings
   database_url: str = "sqlite+aiosqlite:///./test.db"
+  test_database_url: str = "sqlite+aiosqlite:///:memory:"
 
   @property
   def fastapi_kwargs(self) -> FastAPIKwargs:
@@ -79,8 +82,9 @@ class Settings(BaseSettings):
   def logging_kwargs(self) -> LoggingKwargs:
     """Kwargs for logger config."""
     return LoggingKwargs(
-      level=settings.log_level,
+      level=self.log_level,
       format=self.log_format,
+      datefmt=self.log_datefmt,
     )
 
 
@@ -171,17 +175,12 @@ async def get_session() -> AsyncIterator[AsyncSession]:
     yield session
 
 
-def get_logger(request: Request) -> "Logger":
-  """Return logger object, initialized in the lifespan."""
-  return request.app.state.logger
-
-
 async def db_not_found_error_handler(
   request: Request,
   e: NoResultFound,
 ) -> JSONResponse:
   """Database. Not found error handler."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.app.state.logger)
   logger.info("Database Not Found Error: %s", e)
   client_message = {"error": "User not found"}
   return JSONResponse(client_message, status.HTTP_404_NOT_FOUND)
@@ -192,7 +191,7 @@ async def db_integrity_error_handler(
   e: IntegrityError | DuplicateValueException,
 ) -> JSONResponse:
   """Database. Integrity error handler."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.app.state.logger)
   logger.warning("Database Integrity Error: %s", e)
   client_message = {"error": "User already exists"}
   return JSONResponse(client_message, status.HTTP_409_CONFLICT)
@@ -203,7 +202,7 @@ async def validation_error_handler(
   e: RequestValidationError,
 ) -> JSONResponse:
   """Pydantic validation error handler."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.app.state.logger)
   logger.info("Data Validation Error: %s", e)
   client_message = {"error": e.errors()[0]["msg"]}
   return JSONResponse(client_message, status.HTTP_422_UNPROCESSABLE_ENTITY)
@@ -214,14 +213,14 @@ async def unexpected_error_handler(
   e: Exception,
 ) -> JSONResponse:
   """Error handler for all uncaught exceptions."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.app.state.logger)
   logger.critical("Internal Server Error: %s", e)
   client_message = {"error": "Service is temporarily unavailable"}
   return JSONResponse(client_message, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
   """Run database migrations and init application state."""
   logger = configure_logging()
   async with engine.begin() as conn:
@@ -256,11 +255,8 @@ app.include_router(user_router)
 
 
 @app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
-async def health(
-  logger: Annotated["Logger", Depends(get_logger)],
-) -> Response:
+async def health() -> Response:
   """Health-check endpoint."""
-  logger.info("API healthcheck - OK")
   return Response(
     status_code=status.HTTP_204_NO_CONTENT,
     headers={"x-status": "ok"},
