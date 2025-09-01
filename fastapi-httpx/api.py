@@ -2,7 +2,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Any, TypedDict, cast
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 import httpx
 from fastapi import Depends, FastAPI, Path, Request, Response, status
@@ -81,7 +81,7 @@ class Settings(BaseSettings):
   def logging_kwargs(self) -> LoggingKwargs:
     """Kwargs for logger config."""
     return LoggingKwargs(
-      level=settings.log_level,
+      level=self.log_level,
       format=self.log_format,
       datefmt=self.log_datefmt,
     )
@@ -96,10 +96,14 @@ def get_settings() -> Settings:
 settings = get_settings()
 
 
+@lru_cache
 def configure_logging() -> "Logger":
   """Configure app logging and return logger object."""
   logging.basicConfig(**settings.logging_kwargs)
   return logging.getLogger(settings.log_name)
+
+
+logger = configure_logging()
 
 
 class CreatePost(BaseModel):
@@ -129,12 +133,8 @@ class Post(CreatePost):
   )
 
 
-async def http_error_handler(
-  request: Request,
-  e: httpx.HTTPStatusError,
-) -> JSONResponse:
+async def http_error_handler(_: Request, e: httpx.HTTPStatusError) -> JSONResponse:
   """Httpx error handler."""
-  logger = cast("Logger", request.state.logger)
   if e.response.status_code == status.HTTP_404_NOT_FOUND:
     # Handle 404 Not Found errors specifically
     error = e.response.json().get("error", "Post not found")
@@ -150,8 +150,8 @@ async def http_error_handler(
 class AsyncClient(httpx.AsyncClient):
   """Custom async http client based on httpx.AsyncClient.
 
-  The client overrides request method to raise HTTPStatusError
-  for non-200 responses.
+  The client specifies custom event hooks and overrides request
+  method to raise HTTPStatusError for non-200 responses.
   """
 
   async def request(self, *args: Any, **kwargs: Any) -> httpx.Response:
@@ -161,19 +161,33 @@ class AsyncClient(httpx.AsyncClient):
     return response
 
 
+async def log_request(request: httpx.Request) -> None:
+  """Log the incoming request details."""
+  logger.info("Request: %s %s", request.method, request.url)
+
+
+async def log_response(response: httpx.Response) -> None:
+  """Log the outgoing response details."""
+  request = response.request
+  logger.info(
+    "Response: %s %s - Status %d", request.method, request.url, response.status_code
+  )
+
+
 class AppState(TypedDict):
   """State of the main app."""
 
-  logger: "Logger"
   http_client: AsyncClient
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[AppState]:
   """Init app state objects, including logger and HTTP client."""
-  logger = configure_logging()
-  async with AsyncClient(**settings.http_kwargs) as http_client:
-    yield AppState(logger=logger, http_client=http_client)
+  async with AsyncClient(
+    **settings.http_kwargs,
+    event_hooks={"request": [log_request], "response": [log_response]},
+  ) as http_client:
+    yield AppState(http_client=http_client)
 
 
 async def get_http_client(request: Request) -> AsyncClient:
@@ -184,13 +198,14 @@ async def get_http_client(request: Request) -> AsyncClient:
 app = FastAPI(
   **settings.fastapi_kwargs,
   lifespan=lifespan,
-  exception_handlers={
-    httpx.HTTPStatusError: http_error_handler,
-  },
+  exception_handlers={httpx.HTTPStatusError: http_error_handler},
 )
 
 # https://fastapi.tiangolo.com/tutorial/dependencies/#share-annotated-dependencies
 HttpClient = Annotated[AsyncClient, Depends(get_http_client)]
+PostID = Annotated[int, Path(alias="postId")]
+
+PostT = dict[str, Any]
 
 
 @app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
@@ -202,15 +217,12 @@ async def health() -> Response:
   )
 
 
-PostID = Annotated[int, Path(alias="postId")]
-
-
 @app.get(
   "/posts/{postId}",  # noqa: FAST003
   response_model=Post,
   tags=["posts"],
 )
-async def fetch_post(post_id: PostID, http_client: HttpClient) -> dict:
+async def fetch_post(post_id: PostID, http_client: HttpClient) -> PostT:
   """Fetch post by ID."""
   resp = await http_client.get(f"/posts/{post_id}")
   return resp.json()
@@ -221,7 +233,7 @@ async def fetch_post(post_id: PostID, http_client: HttpClient) -> dict:
   response_model=list[Post],
   tags=["posts"],
 )
-async def fetch_all_posts(http_client: HttpClient) -> list[dict]:
+async def fetch_all_posts(http_client: HttpClient) -> PostT:
   """Fetch list of posts."""
   resp = await http_client.get("/posts")
   return resp.json()
@@ -233,7 +245,7 @@ async def fetch_all_posts(http_client: HttpClient) -> list[dict]:
   status_code=status.HTTP_201_CREATED,
   tags=["posts"],
 )
-async def create_post(post: CreatePost, http_client: HttpClient) -> dict:
+async def create_post(post: CreatePost, http_client: HttpClient) -> PostT:
   """Create new post."""
   new_post = post.model_dump(by_alias=True)
   resp = await http_client.post("/posts", json=new_post)
@@ -260,7 +272,7 @@ async def update_post(
   post_id: PostID,
   post: Post,
   http_client: HttpClient,
-) -> dict:
+) -> PostT:
   """Update post by ID."""
   updated_post = post.model_dump(by_alias=True)
   resp = await http_client.put(f"/posts/{post_id}", json=updated_post)
