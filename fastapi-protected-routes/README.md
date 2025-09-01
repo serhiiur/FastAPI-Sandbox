@@ -1,4 +1,12 @@
+## About
+Sample FastAPI application demonstrating protected routes using OAuth2 password flow.
+
+
 ## Running
 ```bash
-poetry run fastapi dev api.py
+python api.py
 ```
+
+
+## Useful links
+- [Fastapi. OAuth2 with Password (and hashing), Bearer with JWT tokens](https://fastapi.tiangolo.com/tutorial/security/oauth2-jwt)
