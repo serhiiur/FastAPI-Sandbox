@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Final, TypedDict, cast
+from typing import TYPE_CHECKING, Final, TypedDict
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response, status
@@ -81,7 +81,7 @@ class Settings(BaseSettings):
   def logging_kwargs(self) -> LoggingKwargs:
     """Kwargs for logger config."""
     return LoggingKwargs(
-      level=settings.log_level,
+      level=self.log_level,
       format=self.log_format,
       datefmt=self.log_datefmt,
     )
@@ -102,10 +102,14 @@ async_session = async_sessionmaker(
 )
 
 
+@lru_cache
 def configure_logging() -> "Logger":
   """Configure app logging and return logger object."""
   logging.basicConfig(**settings.logging_kwargs)
   return logging.getLogger(settings.log_name)
+
+
+logger = configure_logging()
 
 
 class Base(SQLModel):
@@ -165,57 +169,50 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 async def db_not_found_error_handler(
-  request: Request,
+  _: Request,
   e: NoResultFound,
 ) -> JSONResponse:
   """Database. Not found error handler."""
-  logger = cast("Logger", request.app.state.logger)
   logger.info("Database Not Found Error: %s", e)
   client_message = {"error": "User not found"}
   return JSONResponse(client_message, status.HTTP_404_NOT_FOUND)
 
 
 async def db_integrity_error_handler(
-  request: Request,
+  _: Request,
   e: IntegrityError | DuplicateValueException,
 ) -> JSONResponse:
   """Database. Integrity error handler."""
-  logger = cast("Logger", request.app.state.logger)
   logger.warning("Database Integrity Error: %s", e)
   client_message = {"error": "User already exists"}
   return JSONResponse(client_message, status.HTTP_409_CONFLICT)
 
 
 async def validation_error_handler(
-  request: Request,
+  _: Request,
   e: RequestValidationError,
 ) -> JSONResponse:
   """Pydantic validation error handler."""
-  logger = cast("Logger", request.app.state.logger)
   logger.warning("Data Validation Error: %s", e)
   client_message = {"error": e.errors()[0]["msg"]}
   return JSONResponse(client_message, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
 
 async def unexpected_error_handler(
-  request: Request,
+  _: Request,
   e: Exception,
 ) -> JSONResponse:
   """Error handler for all uncaught exceptions."""
-  logger = cast("Logger", request.app.state.logger)
   logger.critical("Internal Server Error: %s", e)
   client_message = {"error": "Service is temporarily unavailable"}
   return JSONResponse(client_message, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator:
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
   """Run database migrations and init application state."""
-  logger = configure_logging()
   async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)
-  # Set application state
-  app.state.logger = logger
   yield
   await engine.dispose()
 
