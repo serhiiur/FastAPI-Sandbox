@@ -1,12 +1,11 @@
-from collections.abc import AsyncIterator  # noqa: I001
+import logging
+from collections.abc import AsyncIterator
 
 import pytest
+from api import CreateUser, UpdateUser, app
 from faker import Faker
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
-
-from api import CreateUser, UpdateUser, app, configure_logging
-
 
 pytestmark = pytest.mark.anyio
 
@@ -22,7 +21,8 @@ def anyio_backend() -> str:
 @pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
-  app.state.logger = configure_logging()
+  # use a different logger specifically for testing
+  app.state.logger = logging.getLogger(__name__)
   transport = ASGITransport(app)
   async with AsyncClient(base_url="http://test", transport=transport) as ac:
     yield ac
@@ -30,7 +30,7 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 def generate_user_info() -> CreateUser:
   """Generate random info about user."""
-  return CreateUser(name=faker.name(), email=faker.email())
+  return CreateUser.model_construct(name=faker.name(), email=faker.email())
 
 
 async def test_health(client: AsyncClient) -> None:
