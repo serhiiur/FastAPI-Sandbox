@@ -1,12 +1,20 @@
-import os
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated, Literal, Self, TypeAlias, TypedDict
+from functools import lru_cache
+from typing import (
+  TYPE_CHECKING,
+  Annotated,
+  Literal,
+  Self,
+  TypeAlias,
+  TypedDict,
+  cast,
+)
 
 # import aiofiles
 from aiobotocore.session import get_session
 from botocore.exceptions import ClientError
-from dotenv import load_dotenv
 from fastapi import (
   Depends,
   FastAPI,
@@ -20,37 +28,116 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.middleware.base import BaseHTTPMiddleware
 
 if TYPE_CHECKING:
+  from logging import Logger
+
   from starlette.middleware.base import RequestResponseEndpoint
-  from starlette.types import ASGIApp
   from types_aiobotocore_s3.client import S3Client
 
 
-load_dotenv()
+class FastAPIKwargs(TypedDict):
+  """Kwargs for FastAPI app."""
+
+  title: str
+  description: str
+  version: str
+  debug: bool
 
 
-# Settings
-AWS_CONFIG = {
-  "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID"),
-  "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
-}
-MAX_FILE_UPLOAD_SIZE = 1_000_000  # 1MB
+class LoggingKwargs(TypedDict):
+  """Kwargs for logger config."""
+
+  level: int
+  format: str
+  datefmt: str
+
+
+class AWSClientKwargs(TypedDict):
+  """Kwargs for AWS S3 client."""
+
+  aws_access_key_id: str
+  aws_secret_access_key: str
+
+
+class Settings(BaseSettings):
+  """API settings."""
+
+  model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+  # FastAPI settings
+  title: str = "AWS S3 Management API"
+  description: str = "API to manage AWS S3 buckets and objects"
+  version: str = "0.0.1"
+  debug: bool = True
+
+  # Logging settings
+  log_name: str = __name__
+  log_level: int = logging.INFO
+  log_format: str = "%(levelname)s - %(name)s - %(asctime)s - %(message)s"
+  log_datefmt: str = "%Y-%m-%d %H:%M:%S"
+
+  # AWS S3 settings
+  aws_access_key_id: str = ""
+  aws_secret_access_key: str = ""
+
+  # Files settings
+  max_file_upload_size: int = 1_000_000  # 1MB
+
+  @property
+  def fastapi_kwargs(self) -> FastAPIKwargs:
+    """Kwargs for FastAPI app."""
+    return FastAPIKwargs(
+      title=self.title,
+      description=self.description,
+      version=self.version,
+      debug=self.debug,
+    )
+
+  @property
+  def logging_kwargs(self) -> LoggingKwargs:
+    """Kwargs for logger config."""
+    return LoggingKwargs(
+      level=self.log_level,
+      format=self.log_format,
+      datefmt=self.log_datefmt,
+    )
+
+  @property
+  def aws_s3_kwargs(self) -> AWSClientKwargs:
+    """Kwargs for AWS S3 client."""
+    return AWSClientKwargs(
+      aws_access_key_id=self.aws_access_key_id,
+      aws_secret_access_key=self.aws_secret_access_key,
+    )
+
+
+@lru_cache
+def get_settings() -> Settings:
+  """Return cached project settings."""
+  return Settings()
+
+
+settings = get_settings()
+
+
+def configure_logging() -> "Logger":
+  """Configure app logging and return logger object."""
+  logging.basicConfig(**settings.logging_kwargs)
+  return logging.getLogger(settings.log_name)
 
 
 class MaxUploadFileSizeMiddleware(BaseHTTPMiddleware):
   """Middleware to validate size of the uploaded file."""
 
-  def __init__(self, app: "ASGIApp", max_upload_file_size: int) -> None:
-    """Init property to specify max file size of a file."""
-    super().__init__(app)
-    self.max_upload_file_size = max_upload_file_size
-
   async def dispatch(
-    self, request: Request, call_next: "RequestResponseEndpoint"
+    self,
+    request: Request,
+    call_next: "RequestResponseEndpoint",
   ) -> Response:
-    """Verify value of the content-length header.
+    """Validate value of the content-length header.
 
     Return HTTP 411 status if length of the content is not set.
     Return HTTP 413 if length exceeds the limit.
@@ -59,8 +146,8 @@ class MaxUploadFileSizeMiddleware(BaseHTTPMiddleware):
       content_length = request.headers.get("content-length")
       if not content_length:
         return Response(status_code=status.HTTP_411_LENGTH_REQUIRED)
-      if int(content_length) > self.max_upload_file_size:
-        max_file_size_in_mb = self.max_upload_file_size // 1_000_000
+      if int(content_length) > settings.max_file_upload_size:
+        max_file_size_in_mb = settings.max_file_upload_size // 1_000_000
         return PlainTextResponse(
           content=f"File is to big. Max file size is {max_file_size_in_mb} MB",
           status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -68,46 +155,49 @@ class MaxUploadFileSizeMiddleware(BaseHTTPMiddleware):
     return await call_next(request)
 
 
-async def aws_client_error_handler(_: Request, e: ClientError) -> JSONResponse:
+async def aws_client_error_handler(
+  request: Request,
+  e: ClientError,
+) -> JSONResponse:
   """AWS client error handler."""
-  content = f"Client Error: {e}"
+  logger = cast("Logger", request.app.state.logger)
+  error = f"Client Error: {e}"
+  logger.error(error)
   status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
   # No such bucket error handling
   if e.response["Error"]["Code"] == "NoSuchBucket":
-    content = e.response["Error"]["Message"]
+    error = e.response["Error"]["Message"]
     status_code = status.HTTP_404_NOT_FOUND
-  return JSONResponse(content, status_code)
-
-
-class AppState(TypedDict):
-  """Data structure to represent state of the main app."""
-
-  s3_client: "S3Client"
+  return JSONResponse(error, status_code)
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[AppState]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
   """Define the client to interact with AWS S3."""
+  logger = configure_logging()
+  app.state.logger = logger
   s3_session = get_session()
-  async with s3_session.create_client("s3", **AWS_CONFIG) as s3_client:
-    yield AppState(s3_client=s3_client)
+  async with s3_session.create_client("s3", **settings.aws_s3_kwargs) as s3_client:
+    app.state.s3_client = s3_client
+    yield
 
 
 async def get_s3_client(request: Request) -> "S3Client":
   """Return the client to interact with S3 declared in the app's lifespan."""
-  return request.state.s3_client
+  return request.app.state.s3_client
 
 
-app = FastAPI(lifespan=lifespan)
-app.add_exception_handler(ClientError, aws_client_error_handler)
-app.add_middleware(
-  MaxUploadFileSizeMiddleware, max_upload_file_size=MAX_FILE_UPLOAD_SIZE
+app = FastAPI(
+  **settings.fastapi_kwargs,
+  lifespan=lifespan,
+  exception_handlers={ClientError: aws_client_error_handler},
 )
+app.add_middleware(MaxUploadFileSizeMiddleware)
 
 # Query param to specify name of S3 bucket
 BucketQueryParam = Query(
   description="Name of S3 bucket",
-  example="my-bucket-cace19b497e8",
+  examples=["my-bucket-cace19b497e8"],
 )
 
 
@@ -115,7 +205,9 @@ class S3BucketName(BaseModel):
   """Schema to specify name of S3 bucket."""
 
   name: str = Field(
-    alias="bucket", description="Name of S3 bucket", example="my-bucket-cace19b497e8"
+    alias="bucket",
+    description="Name of S3 bucket",
+    examples=["my-bucket-cace19b497e8"],
   )
 
 
@@ -131,14 +223,14 @@ class S3ObjectInfo(BaseModel):
   NOTE: when using a Pydantic model for POST-based routes, then
         Query argument can be ignored and an example of field can
         be declared within a pydantic's Field method like this:
-        Field(example='test') instead of Field(Query(example='test'))
+        Field(examples=['test']) instead of Field(Query(examples=['test']))
   """
 
   bucket: str = Field(BucketQueryParam, serialization_alias="Bucket")
   object: str = Field(
     Query(
       description="Name of object in S3 bucket",
-      example="hehe.png",
+      examples=["hehe.png"],
     ),
     serialization_alias="Key",
   )
@@ -146,7 +238,7 @@ class S3ObjectInfo(BaseModel):
     Query(
       None,
       description="Version of object in S3 bucket",
-      example="9fda9ee0-58fd-44f9-8816-d90e377079c0",
+      examples=["9fda9ee0-58fd-44f9-8816-d90e377079c0"],
     ),
     serialization_alias="VersionId",
   )
@@ -188,11 +280,16 @@ S3_Object: TypeAlias = Annotated[S3ObjectInfo, Depends()]
 async def health() -> Response:
   """Health-check endpoint."""
   return Response(
-    status_code=status.HTTP_204_NO_CONTENT, headers={"x-status": "health"}
+    status_code=status.HTTP_204_NO_CONTENT,
+    headers={"x-status": "health"},
   )
 
 
-@app.post("/bucket/create", status_code=status.HTTP_201_CREATED, tags=["s3 bucket"])
+@app.post(
+  "/bucket/create",
+  status_code=status.HTTP_201_CREATED,
+  tags=["s3 bucket"],
+)
 async def create_bucket(bucket: S3BucketName, s3_client: S3_Client) -> Status:
   """Create S3 Bucket.
 
@@ -207,9 +304,14 @@ async def create_bucket(bucket: S3BucketName, s3_client: S3_Client) -> Status:
 
 
 @app.delete(
-  "/bucket/delete", status_code=status.HTTP_204_NO_CONTENT, tags=["s3 bucket"]
+  "/bucket/delete",
+  status_code=status.HTTP_204_NO_CONTENT,
+  tags=["s3 bucket"],
 )
-async def delete_bucket(bucket: S3BucketName, s3_client: S3_Client) -> Response:
+async def delete_bucket(
+  bucket: S3BucketName,
+  s3_client: S3_Client,
+) -> Response:
   """Delete S3 bucket."""
   objects = await s3_client.list_objects_v2(Bucket=bucket.name)
   # bucket isn't empty
@@ -231,14 +333,21 @@ async def upload_file(
   """Upload file into S3 bucket."""
   try:
     file_content = await file.read()
-    await s3_client.put_object(Bucket=bucket.name, Key=file.filename, Body=file_content)
+    await s3_client.put_object(
+      Bucket=bucket.name,
+      Key=file.filename,
+      Body=file_content,
+    )
   finally:
     await file.close()
   return Status(status="uploaded")
 
 
 @app.get("/bucket/objects/list/{bucket}", tags=["s3 object"])
-async def list_objects(bucket: str, s3_client: S3_Client) -> AWSResponseListObjects:
+async def list_objects(
+  bucket: str,
+  s3_client: S3_Client,
+) -> AWSResponseListObjects:
   """List of objects in S3 bucket.
 
   NOTE: only first 1000 objects of the bucket are returned.
@@ -248,12 +357,20 @@ async def list_objects(bucket: str, s3_client: S3_Client) -> AWSResponseListObje
   if "Contents" not in objects:
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Bucket {bucket} is empty")
   return AWSResponseListObjects(
-    bucket=bucket, objects=[obj["Key"] for obj in objects["Contents"]]
+    bucket=bucket,
+    objects=[obj["Key"] for obj in objects["Contents"]],
   )
 
 
-@app.delete("/bucket/objects/delete", tags=["s3 object"])
-async def delete_object(s3_client: S3_Client, s3_object: S3_Object) -> Response:
+@app.delete(
+  "/bucket/objects/delete",
+  tags=["s3 object"],
+  status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_object(
+  s3_client: S3_Client,
+  s3_object: S3_Object,
+) -> Response:
   """Delete object in S3 bucket.
 
   NOTE: if there's no such object in the bucket,
@@ -279,7 +396,10 @@ async def delete_object(s3_client: S3_Client, s3_object: S3_Object) -> Response:
     }
   },
 )
-async def download_object(s3_client: S3_Client, s3_object: S3_Object) -> Response:
+async def download_object(
+  s3_client: S3_Client,
+  s3_object: S3_Object,
+) -> Response:
   """Generate download link to object from S3 bucket."""
   resp = await s3_client.get_object(
     **s3_object.model_dump(by_alias=True, exclude_none=True)
@@ -297,7 +417,10 @@ async def download_object(s3_client: S3_Client, s3_object: S3_Object) -> Respons
 
 
 @app.get("/bucket/objects/presign-url", tags=["s3 object"])
-async def presign_object_url(s3_client: S3_Client, s3_object: S3_Object) -> S3ObjectURL:
+async def presign_object_url(
+  s3_client: S3_Client,
+  s3_object: S3_Object,
+) -> S3ObjectURL:
   """Generate presigned URL for object in S3 bucket."""
   presigned_url = await s3_client.generate_presigned_url(
     "get_object", Params=s3_object.model_dump(by_alias=True, exclude_none=True)
