@@ -1,6 +1,6 @@
 import asyncio  # noqa: I001
+import logging
 from collections.abc import AsyncIterator
-from typing import Final
 
 import pytest
 from faker import Faker
@@ -14,19 +14,17 @@ from sqlalchemy.ext.asyncio import (
 
 from api import (
   app,
+  get_session,
+  settings,
   Base,
   CreateUser,
-  configure_logging,
-  get_session,
   MAX_USER_NAME_LENGTH,
   MIN_USER_NAME_LENGTH,
   UpdateUser,
 )
 
-# Constants
-DATABASE_URL: Final[str] = "sqlite+aiosqlite:///:memory:"
 
-engine = create_async_engine(DATABASE_URL)
+engine = create_async_engine(settings.test_database_url)
 async_session = async_sessionmaker(
   engine,
   class_=AsyncSession,
@@ -37,8 +35,14 @@ faker = Faker()
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture(scope="session")
+def anyio_backend() -> str:
+  """Backend (asyncio) for pytest to run async tests."""
+  return "asyncio"
+
+
 @pytest.fixture(scope="session", autouse=True)
-async def migrate_db() -> AsyncIterator:
+async def migrate_db() -> AsyncIterator[None]:
   """Create and drop test test db on startup and shutdown."""
   async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)
@@ -54,19 +58,11 @@ async def override_get_session() -> AsyncIterator[AsyncSession]:
 
 
 @pytest.fixture(scope="session")
-def anyio_backend() -> str:
-  """Backend (asyncio) for pytest to run async tests."""
-  return "asyncio"
-
-
-@pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
-  # Set application state
-  logger = configure_logging()
-  app.state.logger = logger
-
-  # Override application dependencies
+  # here we use a different logger specifically for testing
+  app.state.logger = logging.getLogger(__name__)
+  # Override app dependencies
   app.dependency_overrides[get_session] = override_get_session
   transport = ASGITransport(app)
   async with AsyncClient(base_url="http://test", transport=transport) as ac:
@@ -75,7 +71,7 @@ async def client() -> AsyncIterator[AsyncClient]:
 
 def generate_user_info() -> CreateUser:
   """Generate random info about user to be created."""
-  return CreateUser(name=faker.name(), email=faker.email())
+  return CreateUser.model_construct(name=faker.name(), email=faker.email())
 
 
 async def create_user(
@@ -86,7 +82,6 @@ async def create_user(
   """Perform API call to create a random user for testing."""
   resp = await client.post("/users", json=user.model_dump())
   assert resp.status_code == expected_http_status_code
-  # user.id = resp.json()["id"]
   return resp
 
 
