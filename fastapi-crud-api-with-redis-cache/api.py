@@ -1,11 +1,20 @@
 import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
-from typing import Annotated, Any, Literal, cast
+from datetime import datetime
+from functools import lru_cache
+from typing import (
+  TYPE_CHECKING,
+  Annotated,
+  Any,
+  Final,
+  Literal,
+  TypedDict,
+  cast,
+)
 from uuid import UUID, uuid4
 
-from fastapi import Depends, FastAPI, Request, Response, status
+from fastapi import APIRouter, Depends, FastAPI, Path, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi_cache import FastAPICache
@@ -13,7 +22,9 @@ from fastapi_cache.backends.redis import RedisBackend
 from fastapi_cache.decorator import cache
 from fastcrud import FastCRUD
 from pydantic import BaseModel, EmailStr
+from pydantic_settings import BaseSettings
 from redis.asyncio import ConnectionPool, Redis
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, NoResultFound
 from sqlalchemy.ext.asyncio import (
   AsyncSession,
@@ -21,49 +32,133 @@ from sqlalchemy.ext.asyncio import (
   create_async_engine,
 )
 from sqlmodel import Field, SQLModel
+from sqlmodel._compat import SQLModelConfig
 
-# Settings
-APP_VERSION = "0.0.1"
-DEBUG = True
-CACHE_PREFIX = "fastapi-cache"
-CACHE_EXPIRE_SECONDS = 60
-DATABASE_URL = "sqlite+aiosqlite:///./test.db"
-MIN_USER_NAME_LENGTH = 2
-MAX_USER_NAME_LENGTH = 255
-REDIS_CONNECTION_URL = "redis://localhost:6379/0"
+if TYPE_CHECKING:
+  from logging import Logger
 
-# Database Objects
-engine = create_async_engine(DATABASE_URL, echo=True)
-async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+# Constants
+MIN_USER_NAME_LENGTH: Final[int] = 2
+MAX_USER_NAME_LENGTH: Final[int] = 255
+USER_ID_LENGTH: Final[int] = 36
 
 
-def configure_logging() -> logging.Logger:
+class FastAPIKwargs(TypedDict):
+  """Kwargs for FastAPI app."""
+
+  title: str
+  description: str
+  version: str
+  debug: bool
+
+
+class LoggingKwargs(TypedDict):
+  """Kwargs for logger config."""
+
+  level: int
+  format: str
+  datefmt: str
+
+
+class CacheKwargs(TypedDict):
+  """Kwargs for FastAPI cache."""
+
+  cache_status_header: str
+  expire: int
+
+
+class Settings(BaseSettings):
+  """API settings."""
+
+  # FastAPI settings
+  title: str = "Users Management App"
+  description: str = "CRUD Application to Manage Users"
+  version: str = "0.0.1"
+  debug: bool = True
+
+  # Logging settings
+  log_name: str = __name__
+  log_level: int = logging.INFO
+  log_format: str = "%(levelname)s - %(name)s - %(asctime)s - %(message)s"
+  log_datefmt: str = "%Y-%m-%d %H:%M:%S"
+
+  # Database settings
+  database_url: str = "sqlite+aiosqlite:///./test.db"
+  test_database_url: str = "sqlite+aiosqlite:///:memory:"
+
+  # Redis + FastAPI Cache settings
+  redis_url: str = "redis://localhost:6379/0"
+  cache_key_prefix: str = "x-cache"
+  cache_key_ttl: int = 60  # seconds
+
+  @property
+  def fastapi_kwargs(self) -> FastAPIKwargs:
+    """Kwargs for FastAPI app."""
+    return FastAPIKwargs(
+      title=self.title,
+      description=self.description,
+      version=self.version,
+      debug=self.debug,
+    )
+
+  @property
+  def logging_kwargs(self) -> LoggingKwargs:
+    """Kwargs for logger config."""
+    return LoggingKwargs(
+      level=self.log_level,
+      format=self.log_format,
+      datefmt=self.log_datefmt,
+    )
+
+  @property
+  def cache_kwargs(self) -> CacheKwargs:
+    """Kwargs for FastAPI cache."""
+    return CacheKwargs(
+      cache_status_header=self.cache_key_prefix,
+      expire=self.cache_key_ttl,
+    )
+
+
+@lru_cache
+def get_settings() -> Settings:
+  """Return cached project settings."""
+  return Settings()
+
+
+settings = get_settings()
+
+engine = create_async_engine(settings.database_url, echo=settings.debug)
+async_session = async_sessionmaker(
+  engine,
+  class_=AsyncSession,
+  expire_on_commit=False,
+)
+
+
+def configure_logging() -> "Logger":
   """Configure app logging and return logger object."""
-  logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-  )
-  return logging.getLogger(__name__)
-
-
-def get_current_datetime() -> datetime:
-  """Return current UTC datetime object."""
-  return datetime.now(UTC)
+  logging.basicConfig(**settings.logging_kwargs)
+  return logging.getLogger(settings.log_name)
 
 
 def get_user_cache_key(user_id: str) -> str:
-  """Return a key representing a user in the cache."""
-  return f"{CACHE_PREFIX}:user:{user_id}"
+  """Return key representing info about user in the cache."""
+  return f"{settings.cache_key_prefix}:user:{user_id}"
 
 
 class Base(SQLModel):
   """Base database model."""
 
-  id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-  created_at: datetime = Field(default_factory=get_current_datetime)
+  id: str = Field(
+    default_factory=lambda: str(uuid4()),
+    min_length=USER_ID_LENGTH,
+    max_length=USER_ID_LENGTH,
+    primary_key=True,
+  )
+  created_at: datetime = Field(default_factory=func.now)
   updated_at: datetime = Field(
-    default_factory=get_current_datetime,
-    sa_column_kwargs={"onupdate": get_current_datetime},
+    default_factory=func.now,
+    sa_column_kwargs={"onupdate": func.now},
   )
 
 
@@ -75,11 +170,27 @@ class CreateUser(SQLModel):
     min_length=MIN_USER_NAME_LENGTH,
     max_length=MAX_USER_NAME_LENGTH,
   )
-  email: EmailStr = Field(description="Email of the user", unique=True, index=True)
+  email: EmailStr = Field(
+    description="Email of the user",
+    unique=True,
+    index=True,
+  )
 
 
 class User(Base, CreateUser, table=True):
   """Database model to represent a user."""
+
+  model_config = SQLModelConfig(
+    json_schema_extra={
+      "example": {
+        "id": "d1811ec8-082b-4f51-be0e-908bcfa5dd60",
+        "name": "Joe Doe",
+        "email": "jd@example.com",
+        "created_at": "2024-02-19T11:09:32",
+        "updated_at": "2024-02-19T11:09:32",
+      }
+    }
+  )
 
 
 class UpdateUser(SQLModel):
@@ -115,28 +226,9 @@ class UserSelectFilters(BaseModel):
     description="Field to sort records by",
   )
   sort_orders: Literal["asc", "desc"] | None = Field(
-    default=None, description="Order to sort records by"
+    default=None,
+    description="Order to sort records by",
   )
-
-
-responses = {
-  404: {
-    "description": "User not found in the database",
-    "content": {"application/json": {"example": {"error": "User not found"}}},
-  },
-  409: {
-    "description": "User already exists in the database",
-    "content": {"application/json": {"example": {"error": "User already exists"}}},
-  },
-  422: {
-    "description": "Data validation error",
-    "content": {
-      "application/json": {"example": {"error": "Value is not a valid email address"}}
-    },
-  },
-}
-
-RawUserResponse = dict[str, Any]
 
 
 class UsersResponse(BaseModel):
@@ -161,7 +253,7 @@ def users_cache_key_builder(
     - specific user: fastapi-cache:user:ad7485b4-0275-411a-8b06-b7c84bc2cf99
     - regular key:   fastapi-cache:get:/users:[('limit', '10'), ('offset', '0')]
   """
-  if user := request.path_params.get("user_id"):
+  if user := request.path_params.get("userId"):
     return get_user_cache_key(user)
   key_params = ":".join(
     [
@@ -170,15 +262,10 @@ def users_cache_key_builder(
       repr(sorted(request.query_params.items())),
     ]
   )
-  return f"{CACHE_PREFIX}:{key_params}"
+  return f"{settings.cache_key_prefix}:{key_params}"
 
 
-def get_logger(request: Request) -> logging.Logger:
-  """Return logger object, initialized in the lifespan."""
-  return request.app.state.logger
-
-
-def get_redis(request: Request) -> Redis:
+async def get_redis(request: Request) -> Redis:
   """Return Redis client, initialized in the lifespan."""
   return request.app.state.redis
 
@@ -188,7 +275,7 @@ async def invalidate_cache(
   redis: Annotated[Redis, Depends(get_redis)],
 ) -> None:
   """Invalidate a key in redis representing a user."""
-  if user_id := request.path_params.get("user_id"):
+  if user_id := request.path_params.get("userId"):
     user_cache_key = get_user_cache_key(user_id)
     await redis.delete(user_cache_key)
 
@@ -204,7 +291,7 @@ async def db_not_found_error_handler(
   e: NoResultFound,
 ) -> JSONResponse:
   """Database. Not found error handler."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.app.state.logger)
   logger.info("Database Not Found Error: %s", e)
   client_message = {"error": "User not found"}
   return JSONResponse(client_message, status.HTTP_404_NOT_FOUND)
@@ -215,7 +302,7 @@ async def db_integrity_error_handler(
   e: IntegrityError,
 ) -> JSONResponse:
   """Database. Integrity error handler."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.app.state.logger)
   logger.warning("Database Integrity Error: %s", e)
   client_message = {"error": "User already exists"}
   return JSONResponse(client_message, status.HTTP_409_CONFLICT)
@@ -226,40 +313,38 @@ async def validation_error_handler(
   e: RequestValidationError,
 ) -> JSONResponse:
   """Pydantic validation error handler."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.app.state.logger)
   logger.warning("Data Validation Error: %s", e)
   client_message = {"error": e.errors()[0]["msg"]}
   return JSONResponse(client_message, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
 
-async def unexpected_error_handler(request: Request, e: Exception) -> JSONResponse:
+async def unexpected_error_handler(
+  request: Request,
+  e: Exception,
+) -> JSONResponse:
   """Error handler for all uncaught exceptions."""
-  logger = get_logger(request)
+  logger = cast("Logger", request.app.state.logger)
   logger.critical("Internal Server Error: %s", e)
-  client_message = {"error": "Internal server error. Try again later"}
+  client_message = {"error": "Service is temporarily unavailable"}
   return JSONResponse(client_message, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator:
-  """Init and release app state objects on app startup and shutdown.
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+  """Init app state objects, including logger and client for Redis.
 
-  The following objects are initialized and released:
-    - client for Redis
-    - database objects based on their schema
-
-  Additionally FastAPI cache objects get initialized on the
-  application startup.
+  Additionally run database migrations and init cache.
   """
   logger = configure_logging()
-  # Init redis client + connection pool
-  redis_connection_pool = ConnectionPool.from_url(REDIS_CONNECTION_URL)
+  # Init redis client based on connection pool
+  redis_connection_pool = ConnectionPool.from_url(settings.redis_url)
   redis_client = Redis(connection_pool=redis_connection_pool)
-  # Init fastapi cache based on redis
+  # Init redis cache
   FastAPICache.init(
     RedisBackend(redis_client),
-    expire=CACHE_EXPIRE_SECONDS,
     key_builder=users_cache_key_builder,
+    **settings.cache_kwargs,
   )
   # Create database objects on startup
   async with engine.begin() as conn:
@@ -268,22 +353,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator:
   # Set application state
   app.state.logger = logger
   app.state.redis = redis_client
+  # yield AppState(logger=logger, redis=redis_client)
 
   yield
 
-  # Disconnect connection pool for redis and close the client
+  await engine.dispose()
   await redis_client.connection_pool.disconnect()
   await redis_client.close()
-  # Dispose database engine
-  await engine.dispose()
 
 
 app = FastAPI(
-  title="Users Management App",
-  description="CRUD Application to Manage Users",
+  **settings.fastapi_kwargs,
   lifespan=lifespan,
-  debug=DEBUG,
-  version=APP_VERSION,
   exception_handlers={
     NoResultFound: db_not_found_error_handler,
     IntegrityError: db_integrity_error_handler,
@@ -291,13 +372,13 @@ app = FastAPI(
     Exception: unexpected_error_handler,
   },
 )
-# app.add_exception_handler(NoResultFound, db_not_found_error_handler)
-# app.add_exception_handler(IntegrityError, db_integrity_error_handler)
-# app.add_exception_handler(RequestValidationError, validation_error_handler)
-# app.add_exception_handler(Exception, unexpected_error_handler)
+router = APIRouter(prefix="/users", tags=["users"])
+crud = FastCRUD(User)
 
-# Init FastCRUD object
-user_crud = FastCRUD(User)
+# https://fastapi.tiangolo.com/tutorial/dependencies/#share-annotated-dependencies
+DbSession = Annotated[AsyncSession, Depends(get_session)]
+
+UserID = Annotated[UUID, Path(alias="userId")]
 
 
 @app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
@@ -305,84 +386,59 @@ async def health() -> Response:
   """Health-check endpoint."""
   return Response(
     status_code=status.HTTP_204_NO_CONTENT,
-    headers={"x-status": "health"},
+    headers={"x-status": "ok"},
   )
 
 
-@app.get(
-  "/users/{user_id}",
+@router.get(
+  "/{userId}",  # noqa: FAST003
   response_model=User,
-  responses={404: responses[404], 422: responses[422]},
-  tags=["users"],
 )
 @cache()
-async def get_user(
-  user_id: UUID,
-  db: Annotated[AsyncSession, Depends(get_session)],
-) -> RawUserResponse:
+async def get_user(user_id: UserID, db: DbSession) -> dict[str, Any]:
   """Get information about user from the database."""
-  if user := await user_crud.get(db, id=str(user_id)):
+  if user := await crud.get(db, id=str(user_id)):
     return user
   raise NoResultFound
 
 
-@app.get(
-  "/users",
-  response_model=UsersResponse,
-  responses={404: responses[404], 422: responses[422]},
-  tags=["users"],
-)
+@router.get("", response_model=UsersResponse)
 @cache()
 async def get_users(
   filters: Annotated[UserSelectFilters, Depends()],
-  db: Annotated[AsyncSession, Depends(get_session)],
-) -> dict[str, list[RawUserResponse] | int]:
+  db: DbSession,
+) -> dict[str, list[dict[str, Any]] | int]:
   """Get information about users from the database."""
-  return await user_crud.get_multi(db, **filters.model_dump())
+  return await crud.get_multi(db, **filters.model_dump())
 
 
-@app.post(
-  "/users",
-  status_code=status.HTTP_201_CREATED,
-  responses={409: responses[409], 422: responses[422]},
-  tags=["users"],
-)
-async def create_user(
-  user: CreateUser,
-  db: Annotated[AsyncSession, Depends(get_session)],
-) -> User:
+@router.post("", status_code=status.HTTP_201_CREATED)
+async def create_user(user: CreateUser, db: DbSession) -> User:
   """Add a new user to the database."""
-  return await user_crud.create(db, user)
+  return await crud.create(db, user)
 
 
-@app.delete(
-  "/users/{user_id}",
+@router.delete(
+  "/{userId}",  # noqa: FAST003
   status_code=status.HTTP_204_NO_CONTENT,
-  responses={404: responses[404], 422: responses[422]},
-  tags=["users"],
   dependencies=[Depends(invalidate_cache)],
 )
-async def delete_user(
-  user_id: UUID,
-  db: Annotated[AsyncSession, Depends(get_session)],
-) -> None:
+async def delete_user(user_id: UserID, db: DbSession) -> None:
   """Delete a user from the database."""
-  return await user_crud.delete(db, id=str(user_id))
+  return await crud.delete(db, id=str(user_id))
 
 
-@app.patch(
-  "/users/{user_id}",
-  responses=dict(responses.items()),
-  tags=["users"],
+@router.patch(
+  "/{userId}",  # noqa: FAST003
   dependencies=[Depends(invalidate_cache)],
 )
 async def update_user(
-  user_id: UUID,
+  user_id: UserID,
   user: UpdateUser,
-  db: Annotated[AsyncSession, Depends(get_session)],
+  db: DbSession,
 ) -> User:
   """Update existing user in the database."""
-  res = await user_crud.update(
+  res = await crud.update(
     db,
     object=user.model_dump(exclude_defaults=True),
     id=str(user_id),
@@ -390,3 +446,6 @@ async def update_user(
     return_as_model=True,
   )
   return cast("User", res)
+
+
+app.include_router(router)
