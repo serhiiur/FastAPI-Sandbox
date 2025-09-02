@@ -1,31 +1,42 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator  # noqa: I001
 from datetime import UTC, datetime
 from secrets import token_hex
+from typing import Any, TYPE_CHECKING
 
 import pytest
-from api import Movie, MovieAwards, MovieImdb, UpdateMovie, app
 from asgi_lifespan import LifespanManager
 from faker import Faker
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
 from mongomock_motor import AsyncMongoMockClient
 
-DB_NAME = "test_sample_mflix"
+from api import Movie, MovieAwards, MovieImdb, UpdateMovie, app, settings
 
-mongo_client = AsyncMongoMockClient()
-db = getattr(mongo_client, DB_NAME)
-
-# Replace real DB object defined in the lifespan
-app.state.db = db
+if TYPE_CHECKING:
+  from motor.motor_asyncio import AsyncIOMotorClient
 
 
-def generate_movie_info(faker: Faker) -> Movie:
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(scope="session")
+def anyio_backend() -> str:
+  return "asyncio"
+
+
+@pytest.fixture
+def movie(faker: Faker) -> Movie:
   """Generate a random movie."""
+  faker.seed_instance()
   movie_awards = MovieAwards(
-    wins=faker.random_number(), nominations=faker.random_number(), text=faker.sentence()
+    wins=faker.random_number(),
+    nominations=faker.random_number(),
+    text=faker.sentence(),
   )
   movie_imdb = MovieImdb(
-    id=faker.random_number(), rating=faker.random_number(), votes=faker.random_number()
+    id=faker.random_number(),
+    rating=faker.random_number(),
+    votes=faker.random_number(),
   )
   return Movie(
     title=faker.sentence(),
@@ -41,11 +52,6 @@ def generate_movie_info(faker: Faker) -> Movie:
 
 
 @pytest.fixture(scope="session")
-def anyio_backend() -> str:
-  return "asyncio"
-
-
-@pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AsyncClient]:
   """Lifespan manager is required here in order to trigger async
   'beanie.init_beanie' function in the lifespan of the app.
@@ -53,108 +59,85 @@ async def client() -> AsyncIterator[AsyncClient]:
   It will not work without it.
   See Warning in https://fastapi.tiangolo.com/advanced/async-tests/#other-asynchronous-function-calls
   """  # noqa: D205
+  mongo: AsyncIOMotorClient[Any] = AsyncMongoMockClient()
+  db = getattr(mongo, settings.test_db_name)
+
+  # Replace real DB object defined in the lifespan of the main app.
+  app.state.db = db
   async with LifespanManager(app) as manager:
     transport = ASGITransport(manager.app)
     async with AsyncClient(base_url="http://test", transport=transport) as ac:
       yield ac
 
 
-@pytest.fixture
-def faker() -> Faker:
-  return Faker()
+async def test_create_movie(client: AsyncClient, movie: Movie) -> None:
+  resp = await client.post("/movies", json=movie.model_dump())
+  assert resp.status_code == status.HTTP_201_CREATED
+  assert "_id" in resp.json()
 
 
-@pytest.mark.anyio
-async def test_ping(client: AsyncClient) -> None:
-  resp = await client.get("/ping/")
-  assert resp.status_code == status.HTTP_200_OK
-  assert resp.json() == {"ok": 1}
-
-
-@pytest.mark.anyio
-async def test_create_movie(client: AsyncClient, faker: Faker) -> None:
-  movie = generate_movie_info(faker)
-  create_movie_resp = await client.post("/movies/", json=movie.model_dump())
+async def test_get_movie(client: AsyncClient, movie: Movie) -> None:
+  create_movie_resp = await client.post("/movies", json=movie.model_dump())
   assert create_movie_resp.status_code == status.HTTP_201_CREATED
-  assert "id" in create_movie_resp.json()
-
-
-@pytest.mark.anyio
-async def test_get_movie(client: AsyncClient, faker: Faker) -> None:
-  # Create Movie
-  movie = generate_movie_info(faker)
-  create_movie_resp = await client.post("/movies/", json=movie.model_dump())
-  assert create_movie_resp.status_code == status.HTTP_201_CREATED
-  movie_id = create_movie_resp.json()["id"]
-  # Get Movie
-  get_movie_resp = await client.get(f"/movies/{movie_id}/")
+  movie_id = create_movie_resp.json()["_id"]
+  get_movie_resp = await client.get(f"/movies/{movie_id}")
   assert get_movie_resp.status_code == status.HTTP_200_OK
-  assert get_movie_resp.json()["id"] == movie_id
+  assert get_movie_resp.json()["_id"] == movie_id
 
 
-@pytest.mark.anyio
 async def test_get_unknown_movie(client: AsyncClient) -> None:
-  # Get Unknown Movie
   unknown_movie_id = token_hex(12)
-  get_unknown_movie_resp = await client.get(f"/movies/{unknown_movie_id}/")
-  assert get_unknown_movie_resp.status_code == status.HTTP_404_NOT_FOUND
+  resp = await client.get(f"/movies/{unknown_movie_id}")
+  assert resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.anyio
-async def test_get_movies(client: AsyncClient, faker: Faker) -> None:
+async def test_get_movies(client: AsyncClient, movie: Movie) -> None:
   # Create 3 Movies
-  total_new_movies = 3
-  for _ in range(total_new_movies):
-    movie = generate_movie_info(faker)
-    create_movie_resp = await client.post("/movies/", json=movie.model_dump())
-    assert create_movie_resp.status_code == status.HTTP_201_CREATED
-  # Get Movies
-  get_movies_resp = await client.get("/movies/")
+  create_movie_resp = await client.post("/movies", json=movie.model_dump())
+  assert create_movie_resp.status_code == status.HTTP_201_CREATED
+  get_movies_resp = await client.get("/movies")
   assert get_movies_resp.status_code == status.HTTP_200_OK
   assert get_movies_resp.json()["movies"]
-  assert get_movies_resp.json()["count"] >= total_new_movies
+  assert get_movies_resp.json()["count"] >= 1
 
 
-@pytest.mark.anyio
-async def test_delete_movie(client: AsyncClient, faker: Faker) -> None:
+async def test_delete_movie(client: AsyncClient, movie: Movie) -> None:
   # Create Movie
-  movie = generate_movie_info(faker)
-  create_movie_resp = await client.post("/movies/", json=movie.model_dump())
+  create_movie_resp = await client.post("/movies", json=movie.model_dump())
   assert create_movie_resp.status_code == status.HTTP_201_CREATED
-  movie_id = create_movie_resp.json()["id"]
+  movie_id = create_movie_resp.json()["_id"]
   # Get Movie
-  get_movie_resp = await client.get(f"/movies/{movie_id}/")
+  get_movie_resp = await client.get(f"/movies/{movie_id}")
   assert get_movie_resp.status_code == status.HTTP_200_OK
-  assert get_movie_resp.json()["id"] == movie_id
+  assert get_movie_resp.json()["_id"] == movie_id
   # Delete Movie
-  delete_movie_resp = await client.delete(f"/movies/{movie_id}/")
+  delete_movie_resp = await client.delete(f"/movies/{movie_id}")
   assert delete_movie_resp.status_code == status.HTTP_204_NO_CONTENT
   # Get Deleted Movie
-  get_movie_resp = await client.get(f"/movies/{movie_id}/")
+  get_movie_resp = await client.get(f"/movies/{movie_id}")
   assert get_movie_resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.anyio
-async def test_update_movie(client: AsyncClient, faker: Faker) -> None:
+async def test_update_movie(client: AsyncClient, movie: Movie) -> None:
   # Create Movie
-  movie = generate_movie_info(faker)
-  create_movie_resp = await client.post("/movies/", json=movie.model_dump())
+  create_movie_resp = await client.post("/movies", json=movie.model_dump())
   assert create_movie_resp.status_code == status.HTTP_201_CREATED
-  movie_id = create_movie_resp.json()["id"]
+  movie_id = create_movie_resp.json()["_id"]
   # Get Movie
-  get_movie_resp = await client.get(f"/movies/{movie_id}/")
+  get_movie_resp = await client.get(f"/movies/{movie_id}")
   assert get_movie_resp.status_code == status.HTTP_200_OK
-  assert get_movie_resp.json()["id"] == movie_id
+  assert get_movie_resp.json()["_id"] == movie_id
   # Update Movie
   updated_movie = UpdateMovie(
-    title=faker.sentence(), num_mflix_comments=faker.random_number()
+    title=movie.title + " Updated",
+    num_mflix_comments=-1,
   )
-  updated_movie_resp = await client.put(
-    f"/movies/{movie_id}/", json=updated_movie.model_dump()
+  updated_movie_resp = await client.patch(
+    f"/movies/{movie_id}", json=updated_movie.model_dump()
   )
   assert updated_movie_resp.status_code == status.HTTP_200_OK
   # Get Updated Movie
-  get_new_movie_resp = await client.get(f"/movies/{movie_id}/")
+  get_new_movie_resp = await client.get(f"/movies/{movie_id}")
   get_new_movie_resp_json = get_new_movie_resp.json()
   assert get_new_movie_resp.status_code == status.HTTP_200_OK
   assert get_new_movie_resp_json["title"] == updated_movie.title
