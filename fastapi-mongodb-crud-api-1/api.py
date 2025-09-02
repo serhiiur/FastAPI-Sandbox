@@ -1,33 +1,87 @@
-import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, Self
+from functools import lru_cache
+from typing import TYPE_CHECKING, Annotated, Any, Self, TypedDict
 
-from beanie import Document, PydanticObjectId, init_beanie
-from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from motor.motor_asyncio import AsyncIOMotorClient
+from beanie import Document, PydanticObjectId, SortDirection, init_beanie
+from fastapi import (
+  APIRouter,
+  Depends,
+  FastAPI,
+  HTTPException,
+  Query,
+  Request,
+  Response,
+  status,
+)
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pymongo import ASCENDING
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pymongo.asynchronous.mongo_client import AsyncMongoClient
 
 if TYPE_CHECKING:
-  from motor.motor_asyncio import AsyncIOMotorDatabase
+  from pymongo.asynchronous.database import AsyncDatabase
+  from pymongo.typings import _DocumentType
 
 
-load_dotenv()
+class FastAPIKwargs(TypedDict):
+  """Kwargs for FastAPI app."""
+
+  title: str
+  description: str
+  version: str
+  debug: bool
 
 
-COLLECTION_NAME = "movies"
-DB_NAME = "sample_mflix"
-MONGODB_URL = os.getenv("MONGODB_URL")
+class Settings(BaseSettings):
+  """API settings."""
+
+  model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+  # FastAPI settings
+  title: str = "Movies Management API"
+  description: str = "CRUD API to manage movies in MongoDB"
+  version: str = "0.0.1"
+  debug: bool = True
+
+  # MongoDB settings
+  mongodb_url: str = ""
+  db_name: str = "sample_mflix"
+  collection_name: str = "movies"
+  # mock database used in testing
+  test_db_name: str = "test_sample_mflix"
+
+  @property
+  def fastapi_kwargs(self) -> FastAPIKwargs:
+    """Kwargs for FastAPI app."""
+    return FastAPIKwargs(
+      title=self.title,
+      description=self.description,
+      version=self.version,
+      debug=self.debug,
+    )
 
 
-class Pagination(BaseModel):
-  """Schema for pagination."""
+@lru_cache
+def get_settings() -> Settings:
+  """Return cached project settings."""
+  return Settings()
 
-  limit: int = Field(10, gt=0)
-  skip: int = Field(0, ge=0)
+
+settings = get_settings()
+
+
+class MovieNotFound(Exception):  # noqa: N818
+  """Custom exception to be raised when a movie is not found."""
+
+  __slots__ = ("message",)
+
+  default_message: str = "Movie not found"
+
+  def __init__(self, message: str | None = None) -> None:
+    """Set error message."""
+    self.message = message or self.default_message
 
 
 class MovieAwards(BaseModel):
@@ -65,7 +119,6 @@ class Movie(Document):
   """Schema to represent a movie in the database."""
 
   title: str
-  num_mflix_comments: int
   awards: MovieAwards
   lastupdated: str
   year: int
@@ -73,6 +126,7 @@ class Movie(Document):
   countries: list[str]
   directors: list[str]
   type: str
+  num_mflix_comments: int | None = None
   plot: str | None = None
   genres: list[str] | None = None
   runtime: int | None = None
@@ -84,10 +138,14 @@ class Movie(Document):
   released: datetime | None = None
   writers: list[str] | None = None
   tomatoes: MovieTomatoes | None = None
+
+  class Settings:
+    name = settings.collection_name
+
   model_config = ConfigDict(
     json_schema_extra={
       "example": {
-        "id": "573a1391f29313caabcd6d40",
+        "_id": "573a1391f29313caabcd6d40",
         "plot": "A tipsy doctor encounters his patient sleepwalking on a building ledge, high above the street.",
         "genres": ["Comedy", "Short"],
         "runtime": 26,
@@ -112,7 +170,7 @@ class Movie(Document):
           "lastUpdated": "2015-06-27T19:17:10.000Z",
         },
       }
-    }
+    },
   )
 
 
@@ -138,87 +196,96 @@ class Movies(BaseModel):
     return self
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator:
-  """Init and close the mongo db client on app startup/shutdown."""
-  mongo = AsyncIOMotorClient(MONGODB_URL)
-  # we redeclare 'app.state.db' object during testing
-  if not hasattr(app.state, "db"):
-    app.state.db = mongo.get_database(DB_NAME)
-  await init_beanie(app.state.db, document_models=[Movie], skip_indexes=True)
-  yield
-  mongo.close()
-
-
-app = FastAPI(lifespan=lifespan)
-
-
-async def get_movies_db(request: Request) -> "AsyncIOMotorDatabase":
+async def get_db(request: Request) -> "AsyncDatabase[Mapping[str, Any]]":
   """Return state db object initialized in the app lifespan."""
   return request.app.state.db
 
 
-@app.get("/ping/")
+async def movie_not_found_error_handler(
+  _: Request,
+  e: MovieNotFound,
+) -> JSONResponse:
+  """Handle movie not found error."""
+  client_message = {"error": e.message}
+  return JSONResponse(client_message, status.HTTP_404_NOT_FOUND)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+  """Init and close the mongo db client on app startup/shutdown."""
+  mongo: AsyncMongoClient[Any] = AsyncMongoClient(settings.mongodb_url)
+  # we redeclare 'app.state.db' object during testing
+  if not hasattr(app.state, "db"):
+    app.state.db = mongo.get_database(settings.db_name)
+  await init_beanie(app.state.db, document_models=[Movie], skip_indexes=True)
+  yield
+  await mongo.close()
+
+
+app = FastAPI(
+  **settings.fastapi_kwargs,
+  lifespan=lifespan,
+  exception_handlers={MovieNotFound: movie_not_found_error_handler},
+)
+router = APIRouter(prefix="/movies", tags=["movies"])
+
+
+@app.get("/ping")
 async def ping(
-  db: Annotated["AsyncIOMotorDatabase", Depends(get_movies_db)],
+  db: Annotated["AsyncDatabase[_DocumentType]", Depends(get_db)],
 ) -> dict[str, bool]:
   """Ping connection with MongoDB server."""
   return await db.command("ping")
 
 
-@app.get(
-  "/movies/{id_}/",
-  response_model_by_alias=False,  # replaces _id with id
-)
-async def get_movie(id_: PydanticObjectId) -> Movie:
+@router.get("/{movie_id}")
+async def get_movie(movie_id: PydanticObjectId) -> Movie:
   """Get a single movie."""
-  if movie := await Movie.get(id_):
+  if movie := await Movie.get(movie_id):
     return movie
-  raise HTTPException(status.HTTP_404_NOT_FOUND, f"Movie {id_} not found")
+  raise MovieNotFound
 
 
-@app.get(
-  "/movies/",
-  response_model_by_alias=False,  # replaces _id with id
-)
-async def get_movies(pagination: Annotated[Pagination, Depends()]) -> Movies:
+@router.get("")
+async def get_movies(
+  limit: Annotated[int, Query(gt=0)] = 10,
+  skip: Annotated[int, Query(ge=0)] = 0,
+) -> Movies:
   """Get a list of movies."""
-  movies = await Movie.find_all(
-    skip=pagination.skip, limit=pagination.limit, sort=[("released", ASCENDING)]
-  ).to_list()
+  sort = [("released", SortDirection.ASCENDING)]
+  movies = await Movie.find_all(skip, limit, sort).to_list()
   return Movies(movies=movies)
 
 
-@app.delete("/movies/{id_}/", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_movie(id_: PydanticObjectId) -> Response:
+@router.delete("/{movie_id}")
+async def delete_movie(movie_id: PydanticObjectId) -> Response:
   """Delete a movie."""
-  if movie := await Movie.get(id_):
+  if movie := await Movie.get(movie_id):
     await movie.delete()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-  raise HTTPException(status.HTTP_404_NOT_FOUND, f"Movie {id_} not found")
+  raise MovieNotFound
 
 
-@app.post(
-  "/movies/",
-  status_code=status.HTTP_201_CREATED,
-  response_model_by_alias=False,  # replaces _id with id
-)
+@router.post("", status_code=status.HTTP_201_CREATED)
 async def create(movie: Movie) -> Movie:
   """Create a movie."""
   return await movie.create()
 
 
-@app.put(
-  "/movies/{id_}/",
-  response_model_by_alias=False,  # replaces _id with id
-)
-async def update_movie(id_: PydanticObjectId, movie_info: UpdateMovie) -> Movie:
+@router.patch("/{movie_id}")
+async def update_movie(
+  movie_id: PydanticObjectId,
+  movie_info: UpdateMovie,
+) -> Movie:
   """Update a movie."""
   updated_movie_info = {
     k: v for k, v in movie_info.model_dump().items() if v is not None
   }
   if len(updated_movie_info) < 1:
     raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nothing to update")
-  if movie := await Movie.get(id_):
+  if movie := await Movie.get(movie_id):
     return await movie.update({"$set": updated_movie_info})
-  raise HTTPException(status.HTTP_404_NOT_FOUND, f"Movie {id_} not found")
+  raise MovieNotFound
+
+
+app.include_router(router)
