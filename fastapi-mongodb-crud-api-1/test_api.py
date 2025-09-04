@@ -1,11 +1,11 @@
 from collections.abc import AsyncIterator  # noqa: I001
 from datetime import UTC, datetime
 from secrets import token_hex
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
 
 import pytest
 from asgi_lifespan import LifespanManager
-from faker import Faker
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
 from mongomock_motor import AsyncMongoMockClient
@@ -13,7 +13,9 @@ from mongomock_motor import AsyncMongoMockClient
 from api import Movie, MovieAwards, MovieImdb, UpdateMovie, app, settings
 
 if TYPE_CHECKING:
+  from faker import Faker
   from motor.motor_asyncio import AsyncIOMotorClient
+  from pymongo.asynchronous.database import AsyncDatabase
 
 
 pytestmark = pytest.mark.anyio
@@ -25,7 +27,7 @@ def anyio_backend() -> str:
 
 
 @pytest.fixture
-def movie(faker: Faker) -> Movie:
+def movie(faker: "Faker") -> Movie:
   """Generate a random movie."""
   faker.seed_instance()
   movie_awards = MovieAwards(
@@ -51,6 +53,10 @@ def movie(faker: Faker) -> Movie:
   )
 
 
+mongo: "AsyncIOMotorClient[Any]" = AsyncMongoMockClient()
+db: "AsyncDatabase[Mapping[str, Any]]" = getattr(mongo, settings.test_db_name)
+
+
 @pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AsyncClient]:
   """Lifespan manager is required here in order to trigger async
@@ -59,10 +65,6 @@ async def client() -> AsyncIterator[AsyncClient]:
   It will not work without it.
   See Warning in https://fastapi.tiangolo.com/advanced/async-tests/#other-asynchronous-function-calls
   """  # noqa: D205
-  mongo: AsyncIOMotorClient[Any] = AsyncMongoMockClient()
-  db = getattr(mongo, settings.test_db_name)
-
-  # Replace real DB object defined in the lifespan of the main app.
   app.state.db = db
   async with LifespanManager(app) as manager:
     transport = ASGITransport(manager.app)
@@ -92,7 +94,6 @@ async def test_get_unknown_movie(client: AsyncClient) -> None:
 
 
 async def test_get_movies(client: AsyncClient, movie: Movie) -> None:
-  # Create 3 Movies
   create_movie_resp = await client.post("/movies", json=movie.model_dump())
   assert create_movie_resp.status_code == status.HTTP_201_CREATED
   get_movies_resp = await client.get("/movies")
@@ -128,7 +129,7 @@ async def test_update_movie(client: AsyncClient, movie: Movie) -> None:
   assert get_movie_resp.status_code == status.HTTP_200_OK
   assert get_movie_resp.json()["_id"] == movie_id
   # Update Movie
-  updated_movie = UpdateMovie(
+  updated_movie = UpdateMovie.model_construct(
     title=movie.title + " Updated",
     num_mflix_comments=-1,
   )
