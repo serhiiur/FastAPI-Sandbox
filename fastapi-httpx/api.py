@@ -2,12 +2,12 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Any, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, Self, TypeAlias, TypedDict
 
 import httpx
-from fastapi import Depends, FastAPI, Path, Request, Response, status
+from fastapi import APIRouter, Depends, FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings
 
 if TYPE_CHECKING:
@@ -43,9 +43,9 @@ class Settings(BaseSettings):
 
   # FastAPI settings
   title: str = "Posts Management API"
-  description: str = "API to manage Posts from a 3rd-party API"
+  description: str = "API to manage Posts from JSONPlaceholder API"
   version: str = "0.0.1"
-  debug: bool = False
+  debug: bool = True
 
   # Logging settings
   log_name: str = __name__
@@ -133,6 +133,19 @@ class Post(CreatePost):
   )
 
 
+class Posts(BaseModel):
+  """Schema to represent a list of posts."""
+
+  posts: list[Post]
+  count: int = 0
+
+  @model_validator(mode="after")
+  def count_posts(self) -> Self:
+    """Set self.count attribute based on length of self.posts."""
+    self.count = len(self.posts)
+    return self
+
+
 async def http_error_handler(_: Request, e: httpx.HTTPStatusError) -> JSONResponse:
   """Httpx error handler."""
   if e.response.status_code == status.HTTP_404_NOT_FOUND:
@@ -200,12 +213,12 @@ app = FastAPI(
   lifespan=lifespan,
   exception_handlers={httpx.HTTPStatusError: http_error_handler},
 )
+router = APIRouter(prefix="/posts", tags=["posts"])
 
 # https://fastapi.tiangolo.com/tutorial/dependencies/#share-annotated-dependencies
-HttpClient = Annotated[AsyncClient, Depends(get_http_client)]
-PostID = Annotated[int, Path(alias="postId")]
+HttpClient: TypeAlias = Annotated[AsyncClient, Depends(get_http_client)]
 
-PostT = dict[str, Any]
+type PostT = dict[str, Any]
 
 
 @app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
@@ -217,34 +230,21 @@ async def health() -> Response:
   )
 
 
-@app.get(
-  "/posts/{postId}",  # noqa: FAST003
-  response_model=Post,
-  tags=["posts"],
-)
-async def fetch_post(post_id: PostID, http_client: HttpClient) -> PostT:
+@router.get("/{post_id}", response_model=Post)
+async def fetch_post(post_id: int, http_client: HttpClient) -> PostT:
   """Fetch post by ID."""
   resp = await http_client.get(f"/posts/{post_id}")
   return resp.json()
 
 
-@app.get(
-  "/posts",
-  response_model=list[Post],
-  tags=["posts"],
-)
-async def fetch_all_posts(http_client: HttpClient) -> PostT:
+@router.get("", response_model=Posts)
+async def fetch_all_posts(http_client: HttpClient) -> dict[str, PostT]:
   """Fetch list of posts."""
   resp = await http_client.get("/posts")
-  return resp.json()
+  return {"posts": resp.json()}
 
 
-@app.post(
-  "/posts",
-  response_model=Post,
-  status_code=status.HTTP_201_CREATED,
-  tags=["posts"],
-)
+@router.post("", response_model=Post, status_code=status.HTTP_201_CREATED)
 async def create_post(post: CreatePost, http_client: HttpClient) -> PostT:
   """Create new post."""
   new_post = post.model_dump(by_alias=True)
@@ -252,28 +252,18 @@ async def create_post(post: CreatePost, http_client: HttpClient) -> PostT:
   return resp.json()
 
 
-@app.delete(
-  "/posts/{postId}",  # noqa: FAST003
-  status_code=status.HTTP_204_NO_CONTENT,
-  tags=["posts"],
-)
-async def delete_post(post_id: PostID, http_client: HttpClient) -> Response:
+@router.delete("/{post_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_post(post_id: int, http_client: HttpClient) -> None:
   """Delete post by ID."""
   await http_client.delete(f"/posts/{post_id}")
-  return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@app.put(
-  "/posts/{postId}",  # noqa: FAST003
-  response_model=Post,
-  tags=["posts"],
-)
-async def update_post(
-  post_id: PostID,
-  post: Post,
-  http_client: HttpClient,
-) -> PostT:
+@router.put("/{post_id}", response_model=Post)
+async def update_post(post_id: int, post: Post, http_client: HttpClient) -> PostT:
   """Update post by ID."""
   updated_post = post.model_dump(by_alias=True)
   resp = await http_client.put(f"/posts/{post_id}", json=updated_post)
   return resp.json()
+
+
+app.include_router(router)
