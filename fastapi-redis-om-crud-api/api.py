@@ -3,13 +3,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Annotated, Final, TypedDict, cast
+from typing import TYPE_CHECKING, Final, Self, TypedDict, cast
 
 from aredis_om import Field, JsonModel, Migrator
 from aredis_om.model.model import NotFoundError
-from fastapi import APIRouter, FastAPI, Path, Request, Response, status
+from fastapi import APIRouter, FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, model_validator
 from pydantic_settings import BaseSettings
 
 if TYPE_CHECKING:
@@ -132,6 +132,19 @@ class User(CreateUser, JsonModel):
   )
 
 
+class Users(BaseModel):
+  """Schema to represent a list of movies."""
+
+  users: list[User]
+  count: int = 0
+
+  @model_validator(mode="after")
+  def count_users(self) -> Self:
+    """Set self.count attr based on length of self.movies attr."""
+    self.count = len(self.users)
+    return self
+
+
 async def user_not_found_error_handler(
   request: Request,
   e: NotFoundError,
@@ -175,9 +188,6 @@ app = FastAPI(
 )
 router = APIRouter(prefix="/users", tags=["users"])
 
-# https://fastapi.tiangolo.com/tutorial/dependencies/#share-annotated-dependencies
-UserID = Annotated[str, Path(alias="userId")]
-
 
 @app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
 async def health() -> Response:
@@ -188,18 +198,17 @@ async def health() -> Response:
   )
 
 
-@router.get(
-  "/{userId}",  # noqa: FAST003
-)
-async def get_user(user_id: UserID) -> User:
+@router.get("/{user_id}")
+async def get_user(user_id: str) -> User:
   """Get information about user from the database."""
   return await User.get(user_id)
 
 
 @router.get("")
-async def get_users(offset: int = 0, limit: int = 10) -> list[User]:
+async def get_users(offset: int = 0, limit: int = 10) -> Users:
   """Get information about users from the database."""
-  return await User.find().sort_by("-created_at").page(offset, limit)
+  users = await User.find().sort_by("-created_at").page(offset, limit)
+  return Users(users=users)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -208,19 +217,14 @@ async def add_user(user: CreateUser) -> User:
   return await User.model_validate(user).save()
 
 
-@router.delete(
-  "/{userId}",  # noqa: FAST003
-  status_code=status.HTTP_204_NO_CONTENT,
-)
-async def delete_user(user_id: UserID) -> None:
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(user_id: str) -> None:
   """Delete a user from the database."""
   await User.delete(user_id)
 
 
-@router.patch(
-  "/{userId}",  # noqa: FAST003
-)
-async def update_user(user_id: UserID, user: UpdateUser) -> User:
+@router.patch("/{user_id}")
+async def update_user(user_id: str, user: UpdateUser) -> User:
   """Update existing user in the database."""
   db_user = await User.get(user_id)
   await db_user.update(**user.model_dump(exclude_defaults=True))
