@@ -1,31 +1,29 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator  # noqa: I001
 from secrets import token_hex
+from typing import TYPE_CHECKING, Any
 
 import pytest
-from api import CreateUser, UpdateUser, app, get_users_collection, get_users_db
-from faker import Faker
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
 from mongomock_motor import AsyncMongoMockClient
 
-COLLECTION_NAME = "test_users"
-DB_NAME = "test_sample_mflix"
+from api import (
+  CreateUser,
+  UpdateUser,
+  DatabaseT,
+  CollectionT,
+  app,
+  get_users_collection,
+  get_users_db,
+  settings,
+)
 
-mongo_client = AsyncMongoMockClient()
-db = getattr(mongo_client, DB_NAME)
-collection = getattr(db, COLLECTION_NAME)
-
-# app.state.db = db
-# app.state.collection = collection
-
-# Override dependencies to set testing DB and Collection objects
-app.dependency_overrides[get_users_db] = lambda: db
-app.dependency_overrides[get_users_collection] = lambda: collection
+if TYPE_CHECKING:
+  from faker import Faker
+  from motor.motor_asyncio import AsyncIOMotorClient
 
 
-def generate_user_info(faker: Faker) -> CreateUser:
-  """Helper function to generate a random user"""
-  return CreateUser(name=faker.name(), email=faker.email(), password=faker.password())
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture(scope="session")
@@ -33,111 +31,146 @@ def anyio_backend() -> str:
   return "asyncio"
 
 
+@pytest.fixture
+def user(faker: "Faker") -> CreateUser:
+  """Generate a random user."""
+  faker.seed_instance()
+  return CreateUser.model_construct(
+    name=faker.name(),
+    email=faker.email(),
+    password=faker.password(),
+  )
+
+
+mongo: "AsyncIOMotorClient[Any]" = AsyncMongoMockClient()
+db: DatabaseT = getattr(mongo, settings.test_db_name)
+collection: CollectionT = getattr(db, settings.collection_name)
+
+
+async def override_get_users_db() -> DatabaseT:
+  return db
+
+
+async def override_get_users_collection() -> CollectionT:
+  return collection
+
+
 @pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AsyncClient]:
+  # add unique index to email field on the mock collection
+  await collection.create_index("email", unique=True)
+  app.dependency_overrides[get_users_db] = override_get_users_db
+  app.dependency_overrides[get_users_collection] = override_get_users_collection
   transport = ASGITransport(app)
   async with AsyncClient(base_url="http://test", transport=transport) as ac:
     yield ac
 
 
-@pytest.fixture(scope="function")
-def faker() -> Faker:
-  return Faker()
-
-
-@pytest.mark.anyio
 async def test_ping(client: AsyncClient) -> None:
-  resp = await client.get("/ping/")
+  resp = await client.get("/ping")
   assert resp.status_code == status.HTTP_200_OK
   assert resp.json() == {"ok": 1}
 
 
-@pytest.mark.anyio
-async def test_create_user(client: AsyncClient, faker: Faker) -> None:
-  user = generate_user_info(faker)
-  create_user_resp = await client.post("/users/", json=user.model_dump())
+async def test_create_user_already_exists(
+  client: AsyncClient,
+  user: CreateUser,
+) -> None:
+  create_user_resp = await client.post("/users", json=user.model_dump())
   assert create_user_resp.status_code == status.HTTP_201_CREATED
-  assert "id" in create_user_resp.json()
+  create_user_resp = await client.post("/users", json=user.model_dump())
+  assert create_user_resp.status_code == status.HTTP_409_CONFLICT
 
 
-@pytest.mark.anyio
-async def test_get_user(client: AsyncClient, faker: Faker) -> None:
-  # Create User
-  user = generate_user_info(faker)
-  create_user_resp = await client.post("/users/", json=user.model_dump())
+async def test_create_user(client: AsyncClient, user: CreateUser) -> None:
+  resp = await client.post("/users", json=user.model_dump())
+  assert resp.status_code == status.HTTP_201_CREATED
+  assert "id" in resp.json()
+
+
+async def test_get_user(client: AsyncClient, user: CreateUser) -> None:
+  create_user_resp = await client.post("/users", json=user.model_dump())
   assert create_user_resp.status_code == status.HTTP_201_CREATED
-  # Get User
   user_id = create_user_resp.json()["id"]
-  get_user_resp = await client.get(f"/users/{user_id}/")
+  get_user_resp = await client.get(f"/users/{user_id}")
   assert get_user_resp.status_code == status.HTTP_200_OK
   assert get_user_resp.json()["id"] == user_id
 
 
-@pytest.mark.anyio
 async def test_get_unknown_user(client: AsyncClient) -> None:
-  # Get Unknown User
   unknown_user_id = token_hex(12)
-  get_unknown_user_resp = await client.get(f"/users/{unknown_user_id}/")
-  assert get_unknown_user_resp.status_code == status.HTTP_404_NOT_FOUND
+  resp = await client.get(f"/users/{unknown_user_id}")
+  assert resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.anyio
-async def test_get_users(client: AsyncClient, faker: Faker) -> None:
-  # Create 3 Users
-  total_new_users = 3
-  for _ in range(total_new_users):
-    user = generate_user_info(faker)
-    create_user_resp = await client.post("/users/", json=user.model_dump())
-    assert create_user_resp.status_code == status.HTTP_201_CREATED
-  # Get Users
-  get_users_resp = await client.get("/users/")
+async def test_get_users(client: AsyncClient, user: CreateUser) -> None:
+  create_user_resp = await client.post("/users", json=user.model_dump())
+  assert create_user_resp.status_code == status.HTTP_201_CREATED
+  get_users_resp = await client.get("/users")
   assert get_users_resp.status_code == status.HTTP_200_OK
   assert get_users_resp.json()["users"]
-  assert get_users_resp.json()["count"] >= total_new_users
+  assert get_users_resp.json()["count"] >= 1
 
 
-@pytest.mark.anyio
-async def test_delete_user(client: AsyncClient, faker: Faker) -> None:
+async def test_delete_user(client: AsyncClient, user: CreateUser) -> None:
   # Create User
-  user = generate_user_info(faker)
-  create_user_resp = await client.post("/users/", json=user.model_dump())
+  create_user_resp = await client.post("/users", json=user.model_dump())
   assert create_user_resp.status_code == status.HTTP_201_CREATED
   # Get User
   user_id = create_user_resp.json()["id"]
-  get_user_resp = await client.get(f"/users/{user_id}/")
+  get_user_resp = await client.get(f"/users/{user_id}")
   assert get_user_resp.status_code == status.HTTP_200_OK
   assert get_user_resp.json()["id"] == user_id
   # Delete User
-  delete_user_resp = await client.delete(f"/users/{user_id}/")
+  delete_user_resp = await client.delete(f"/users/{user_id}")
   assert delete_user_resp.status_code == status.HTTP_204_NO_CONTENT
   # Get Deleted User
-  get_user_resp = await client.get(f"/users/{user_id}/")
+  get_user_resp = await client.get(f"/users/{user_id}")
   assert get_user_resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.anyio
-async def test_update_user(client: AsyncClient, faker: Faker) -> None:
+async def test_delete_unknown_user(client: AsyncClient) -> None:
+  unknown_user_id = token_hex(12)
+  resp = await client.delete(f"/users/{unknown_user_id}")
+  assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+
+async def test_update_user(client: AsyncClient, user: CreateUser) -> None:
   # Create User
-  user = generate_user_info(faker)
-  create_user_resp = await client.post("/users/", json=user.model_dump())
+  create_user_resp = await client.post("/users", json=user.model_dump())
   assert create_user_resp.status_code == status.HTTP_201_CREATED
   # Get User
   user_id = create_user_resp.json()["id"]
-  get_user_resp = await client.get(f"/users/{user_id}/")
+  get_user_resp = await client.get(f"/users/{user_id}")
   assert get_user_resp.status_code == status.HTTP_200_OK
   assert get_user_resp.json()["id"] == user_id
   # Update User
-  updated_user = UpdateUser(
-    name=faker.name(), email=faker.email(), password=faker.password()
+  updated_user = UpdateUser.model_construct(
+    name=user.name + " Updated",
+    password=user.password + " Updated",
   )
-  updated_user_resp = await client.put(
-    f"/users/{user_id}/", json=updated_user.model_dump()
+  updated_user_resp = await client.patch(
+    f"/users/{user_id}", json=updated_user.model_dump()
   )
   assert updated_user_resp.status_code == status.HTTP_200_OK
   # Get Updated User
-  get_new_user_resp = await client.get(f"/users/{user_id}/")
+  get_new_user_resp = await client.get(f"/users/{user_id}")
   get_new_user_resp_json = get_new_user_resp.json()
   assert get_new_user_resp.status_code == status.HTTP_200_OK
   assert get_new_user_resp_json["name"] == updated_user.name
-  assert get_new_user_resp_json["email"] == updated_user.email
   assert get_new_user_resp_json["password"] == updated_user.password
+
+
+async def test_update_user_nothing_to_update_error(client: AsyncClient) -> None:
+  random_user_id = token_hex(12)
+  resp = await client.patch(f"/users/{random_user_id}", json={})
+  assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+
+async def test_update_unknown_user(client: AsyncClient, user: CreateUser) -> None:
+  unknown_user_id = token_hex(12)
+  resp = await client.patch(
+    f"/users/{unknown_user_id}",
+    json=user.model_dump(),
+  )
+  assert resp.status_code == status.HTTP_404_NOT_FOUND
