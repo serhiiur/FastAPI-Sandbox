@@ -19,7 +19,6 @@ from fastapi import (
   Depends,
   FastAPI,
   File,
-  HTTPException,
   Query,
   Request,
   Response,
@@ -27,7 +26,7 @@ from fastapi import (
   status,
 )
 from fastapi.responses import JSONResponse, PlainTextResponse
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -155,6 +154,27 @@ class MaxUploadFileSizeMiddleware(BaseHTTPMiddleware):
     return await call_next(request)
 
 
+class EmptyBucketError(Exception):
+  """Custom exception to be raised when the target S3 bucket is empty."""
+
+  __slots__ = ("message",)
+
+  default_message: str = "S3 bucket is empty"
+
+  def __init__(self, message: str | None = None) -> None:
+    """Set error message."""
+    self.message = message or self.default_message
+
+
+async def bucket_empty_error_handler(
+  _: Request,
+  e: EmptyBucketError,
+) -> JSONResponse:
+  """Handle s3 bucket empty error."""
+  client_message = {"error": e.message}
+  return JSONResponse(client_message, status.HTTP_400_BAD_REQUEST)
+
+
 async def aws_client_error_handler(
   request: Request,
   e: ClientError,
@@ -190,7 +210,10 @@ async def get_s3_client(request: Request) -> "S3Client":
 app = FastAPI(
   **settings.fastapi_kwargs,
   lifespan=lifespan,
-  exception_handlers={ClientError: aws_client_error_handler},
+  exception_handlers={
+    ClientError: aws_client_error_handler,
+    EmptyBucketError: bucket_empty_error_handler,
+  },
 )
 app.add_middleware(MaxUploadFileSizeMiddleware)
 
@@ -262,7 +285,7 @@ class AWSResponseListObjects(BaseModel):
 class S3ObjectURL(BaseModel):
   """Schema to represent a URL of the object in S3 bucket."""
 
-  url: AnyHttpUrl = Field(description="URL to S3 object")
+  url: str = Field(description="URL to S3 object")
 
 
 class Status(BaseModel):
@@ -308,10 +331,7 @@ async def create_bucket(bucket: S3BucketName, s3_client: S3_Client) -> Status:
   status_code=status.HTTP_204_NO_CONTENT,
   tags=["s3 bucket"],
 )
-async def delete_bucket(
-  bucket: S3BucketName,
-  s3_client: S3_Client,
-) -> Response:
+async def delete_bucket(bucket: S3BucketName, s3_client: S3_Client) -> None:
   """Delete S3 bucket."""
   objects = await s3_client.list_objects_v2(Bucket=bucket.name)
   # bucket isn't empty
@@ -321,7 +341,6 @@ async def delete_bucket(
     await s3_client.delete_objects(Bucket=bucket.name, Delete={"Objects": objects})
   # Delete empty bucket
   await s3_client.delete_bucket(Bucket=bucket.name)
-  return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.post("/bucket/objects/upload", tags=["s3 object"])
@@ -344,10 +363,7 @@ async def upload_file(
 
 
 @app.get("/bucket/objects/list/{bucket}", tags=["s3 object"])
-async def list_objects(
-  bucket: str,
-  s3_client: S3_Client,
-) -> AWSResponseListObjects:
+async def list_objects(bucket: str, s3_client: S3_Client) -> AWSResponseListObjects:
   """List of objects in S3 bucket.
 
   NOTE: only first 1000 objects of the bucket are returned.
@@ -355,7 +371,7 @@ async def list_objects(
   """
   objects = await s3_client.list_objects_v2(Bucket=bucket)
   if "Contents" not in objects:
-    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Bucket {bucket} is empty")
+    raise EmptyBucketError
   return AWSResponseListObjects(
     bucket=bucket,
     objects=[obj["Key"] for obj in objects["Contents"]],
@@ -370,7 +386,7 @@ async def list_objects(
 async def delete_object(
   s3_client: S3_Client,
   s3_object: S3_Object,
-) -> Response:
+) -> None:
   """Delete object in S3 bucket.
 
   NOTE: if there's no such object in the bucket,
@@ -379,7 +395,6 @@ async def delete_object(
   await s3_client.delete_object(
     **s3_object.model_dump(by_alias=True, exclude_none=True)
   )
-  return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get(
@@ -423,6 +438,7 @@ async def presign_object_url(
 ) -> S3ObjectURL:
   """Generate presigned URL for object in S3 bucket."""
   presigned_url = await s3_client.generate_presigned_url(
-    "get_object", Params=s3_object.model_dump(by_alias=True, exclude_none=True)
+    "get_object",
+    Params=s3_object.model_dump(by_alias=True, exclude_none=True),
   )
   return S3ObjectURL(url=presigned_url)
