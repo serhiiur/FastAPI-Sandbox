@@ -1,12 +1,18 @@
-import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Annotated, Self, TypedDict
+from functools import lru_cache
+from typing import TYPE_CHECKING, Annotated, Any, Self, TypeAlias, TypedDict
 
 from bson import ObjectId
-from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
-from motor.motor_asyncio import AsyncIOMotorClient
+from fastapi import (
+  APIRouter,
+  Depends,
+  FastAPI,
+  Query,
+  Request,
+  status,
+)
+from fastapi.responses import JSONResponse
 from pydantic import (
   BaseModel,
   BeforeValidator,
@@ -15,25 +21,85 @@ from pydantic import (
   Field,
   model_validator,
 )
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pymongo import ASCENDING, ReturnDocument
+from pymongo.asynchronous.mongo_client import AsyncMongoClient
+from pymongo.errors import DuplicateKeyError
 
 if TYPE_CHECKING:
-  from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
+  from pymongo.asynchronous.collection import AsyncCollection
+  from pymongo.asynchronous.database import AsyncDatabase
 
 
-load_dotenv()
+class FastAPIKwargs(TypedDict):
+  """Kwargs for FastAPI app."""
+
+  title: str
+  description: str
+  version: str
+  debug: bool
 
 
-COLLECTION_NAME = "users"
-DB_NAME = "sample_mflix"
-MONGODB_URL = os.getenv("MONGODB_URL")
+class Settings(BaseSettings):
+  """API settings."""
+
+  model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
+  # FastAPI settings
+  title: str = "Users Management API"
+  description: str = "CRUD API to manage users in MongoDB"
+  version: str = "0.0.1"
+  debug: bool = True
+
+  # MongoDB settings
+  mongodb_url: str = ""
+  db_name: str = "sample_mflix"
+  collection_name: str = "users"
+  # mock database used in testing
+  test_db_name: str = "test_sample_mflix"
+
+  @property
+  def fastapi_kwargs(self) -> FastAPIKwargs:
+    """Kwargs for FastAPI app."""
+    return FastAPIKwargs(
+      title=self.title,
+      description=self.description,
+      version=self.version,
+      debug=self.debug,
+    )
 
 
-class Pagination(BaseModel):
-  """Schema for pagination."""
+@lru_cache
+def get_settings() -> Settings:
+  """Return cached project settings."""
+  return Settings()
 
-  limit: int = Field(10, gt=0)
-  skip: int = Field(0, ge=0)
+
+settings = get_settings()
+
+
+class UserNotFoundError(Exception):
+  """Custom exception to be raised when a user is not found."""
+
+  __slots__ = ("message",)
+
+  default_message: str = "User not found"
+
+  def __init__(self, message: str | None = None) -> None:
+    """Set error message."""
+    self.message = message or self.default_message
+
+
+class NothingToUpdate(Exception):  # noqa: N818
+  """Custom exception to be raised when there's noting to update."""
+
+  __slots__ = ("message",)
+
+  default_message: str = "Nothing to update"
+
+  def __init__(self, message: str | None = None) -> None:
+    """Set error message."""
+    self.message = message or self.default_message
 
 
 class CreateUser(BaseModel):
@@ -55,8 +121,8 @@ class UpdateUser(BaseModel):
 class User(CreateUser):
   """Schema to represent a user in the database.
 
-  NOTE: id Represents an ObjectId field in the database.
-        It will be represented as a `str` on the model,
+  NOTE: id is actually an ObjectId field in the document,
+        but in the model it will be interpreted as a str,
         so that it can be serialized to JSON.
   """
 
@@ -83,132 +149,167 @@ class Users(BaseModel):
 
   @model_validator(mode="after")
   def count_users(self) -> Self:
-    """Set self.count attribute based on length of self.users attribute."""
+    """Set self.count attribute based on length of self.users."""
     self.count = len(self.users)
     return self
+
+
+async def user_not_found_error_handler(
+  _: Request,
+  e: UserNotFoundError,
+) -> JSONResponse:
+  """Handle user not found error."""
+  client_message = {"error": e.message}
+  return JSONResponse(client_message, status.HTTP_404_NOT_FOUND)
+
+
+async def user_already_exists_error_handler(
+  _: Request,
+  e: DuplicateKeyError,  # noqa: ARG001
+) -> JSONResponse:
+  """Handle user not found error."""
+  client_message = {"error": "User already exists"}
+  return JSONResponse(client_message, status.HTTP_409_CONFLICT)
+
+
+async def user_nothing_to_update_error_handler(
+  _: Request,
+  e: NothingToUpdate,
+) -> JSONResponse:
+  """Handle nothing to update error."""
+  client_message = {"error": e.message}
+  return JSONResponse(client_message, status.HTTP_400_BAD_REQUEST)
+
+
+# custom type aliases
+type DocumentT = Mapping[str, Any]
+type DatabaseT = "AsyncDatabase[DocumentT]"
+type CollectionT = "AsyncCollection[DocumentT]"
 
 
 class AppState(TypedDict):
   """Data structure to represent state of the main app."""
 
-  db: "AsyncIOMotorDatabase"
-  collection: "AsyncIOMotorCollection"
+  db: DatabaseT
+  collection: CollectionT
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[AppState]:
   """Init and close the mongo db client on app startup/shutdown."""
-  mongo = AsyncIOMotorClient(MONGODB_URL)
-  db = mongo.get_database(DB_NAME)
-  collection = db.get_collection(COLLECTION_NAME)
-  # app.state.db = db
-  # app.state.collection = collection
-  # yield
+  mongo: AsyncMongoClient[Any] = AsyncMongoClient(settings.mongodb_url)
+  db = mongo.get_database(settings.db_name)
+  collection = db.get_collection(settings.collection_name)
   yield AppState(db=db, collection=collection)
-  mongo.close()
+  await mongo.close()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+  **settings.fastapi_kwargs,
+  lifespan=lifespan,
+  exception_handlers={
+    NothingToUpdate: user_nothing_to_update_error_handler,
+    UserNotFoundError: user_not_found_error_handler,
+    DuplicateKeyError: user_already_exists_error_handler,
+  },
+)
+router = APIRouter(prefix="/users", tags=["users"])
 
 
-async def get_users_db(request: Request) -> "AsyncIOMotorDatabase":
+async def get_users_db(request: Request) -> DatabaseT:
   """Dependency to get initialized in the lifespan 'db' object."""
-  # return request.app.state.db
   return request.state.db
 
 
-async def get_users_collection(request: Request) -> "AsyncIOMotorCollection":
+async def get_users_collection(request: Request) -> CollectionT:
   """Dependency to get initialized in the lifespan 'collection' object."""
-  # return request.app.state.collection
   return request.state.collection
 
 
-@app.get(
-  "/ping/",
-  description="Ping connection with MongoDB server",
-  responses={
-    200: {
-      "description": "Ping response from the server",
-      "content": {"application/json": {"example": {"ok": True}}},
-    }
-  },
-)
+@app.get("/ping")
 async def ping(
-  db: Annotated["AsyncIOMotorDatabase", Depends(get_users_db)],
+  db: Annotated[DatabaseT, Depends(get_users_db)],
 ) -> dict[str, bool]:
   """Ping connection with MongoDB server."""
   return await db.command("ping")
 
 
-@app.get("/users/", response_model_by_alias=False)
-async def get_users(
-  pagination: Annotated[Pagination, Depends()],
-  collection: Annotated["AsyncIOMotorCollection", Depends(get_users_collection)],
-) -> Users:
-  """List of all users."""
-  users = (
-    await collection.find()
-    .limit(pagination.limit)
-    .skip(pagination.skip)
-    .sort("name", ASCENDING)
-    .to_list()
-  )
-  return Users(users=users)
+Collection: TypeAlias = Annotated[CollectionT, Depends(get_users_collection)]
 
 
-@app.get("/users/{id_}/", response_model_by_alias=False)
-async def get_user(
-  id_: str,
-  collection: Annotated["AsyncIOMotorCollection", Depends(get_users_collection)],
-) -> User:
-  """Get a single user."""
-  if user := await collection.find_one({"_id": ObjectId(id_)}):
-    return user
-  raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {id_} not found")
-
-
-@app.post(
-  "/users/",
-  status_code=status.HTTP_201_CREATED,
+@router.get(
+  "",
+  response_model=Users,
   response_model_by_alias=False,
 )
-async def create(
-  user: CreateUser,
-  collection: Annotated["AsyncIOMotorCollection", Depends(get_users_collection)],
-) -> User:
+async def get_users(
+  collection: Collection,
+  limit: Annotated[int, Query(gt=0)] = 10,
+  skip: Annotated[int, Query(ge=0)] = 0,
+) -> DocumentT:
+  """List of users."""
+  if users := (
+    await collection.find().limit(limit).skip(skip).sort("name", ASCENDING).to_list()
+  ):
+    return {"users": users}
+  raise UserNotFoundError
+
+
+@router.get(
+  "/{user_id}",
+  response_model=User,
+  response_model_by_alias=False,
+)
+async def get_user(user_id: str, collection: Collection) -> DocumentT:
+  """Get a single user."""
+  if user := await collection.find_one({"_id": ObjectId(user_id)}):
+    return user
+  raise UserNotFoundError
+
+
+@router.post(
+  "",
+  status_code=status.HTTP_201_CREATED,
+  response_model=User,
+  response_model_by_alias=False,
+)
+async def create_user(user: CreateUser, collection: Collection) -> DocumentT:
   """Add a new user."""
-  new_user = await collection.insert_one(user.model_dump())
-  return await collection.find_one({"_id": new_user.inserted_id})
+  user_data = user.model_dump()
+  await collection.insert_one(user_data)
+  return user_data
 
 
-@app.delete("/users/{id_}/", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(
-  id_: str,
-  collection: Annotated["AsyncIOMotorCollection", Depends(get_users_collection)],
-) -> Response:
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(user_id: str, collection: Collection) -> None:
   """Delete a user."""
-  user = await collection.delete_one({"_id": ObjectId(id_)})
+  user = await collection.delete_one({"_id": ObjectId(user_id)})
   if user.deleted_count:
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-  raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {id_} not found")
+    return
+  raise UserNotFoundError
 
 
-@app.put("/users/{id_}/", response_model_by_alias=False)
+@router.patch(
+  "/{user_id}",
+  response_model=User,
+  response_model_by_alias=False,
+)
 async def update_user(
-  id_: str,
+  user_id: str,
   user: UpdateUser,
-  collection: Annotated["AsyncIOMotorCollection", Depends(get_users_collection)],
-) -> User:
+  collection: Collection,
+) -> DocumentT:
   """Update a user."""
-  if user := {k: v for k, v in user.model_dump().items() if v is not None}:
-    update_res = await collection.find_one_and_update(
-      {"_id": ObjectId(id_)}, {"$set": user}, return_document=ReturnDocument.AFTER
-    )
-    if update_res:
-      return update_res
-    raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {id_} not found")
+  user_data = user.model_dump(exclude_none=True)
+  if not user_data:
+    raise NothingToUpdate
+  if update_res := await collection.find_one_and_update(
+    {"_id": ObjectId(user_id)},
+    {"$set": user_data},
+    return_document=ReturnDocument.AFTER,
+  ):
+    return update_res
+  raise UserNotFoundError
 
-  # The update is empty, but we should still return the matching document
-  if existing_user := await collection.find_one({"_id": id_}):
-    return existing_user
-  raise HTTPException(status.HTTP_404_NOT_FOUND, f"User {id_} not found")
+
+app.include_router(router)
