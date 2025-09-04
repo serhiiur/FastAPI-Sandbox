@@ -9,10 +9,8 @@ from fastapi import (
   APIRouter,
   Depends,
   FastAPI,
-  HTTPException,
   Query,
   Request,
-  Response,
   status,
 )
 from fastapi.responses import JSONResponse
@@ -49,7 +47,6 @@ class Settings(BaseSettings):
   mongodb_url: str = ""
   db_name: str = "sample_mflix"
   collection_name: str = "movies"
-  # mock database used in testing
   test_db_name: str = "test_sample_mflix"
 
   @property
@@ -78,6 +75,18 @@ class MovieNotFound(Exception):  # noqa: N818
   __slots__ = ("message",)
 
   default_message: str = "Movie not found"
+
+  def __init__(self, message: str | None = None) -> None:
+    """Set error message."""
+    self.message = message or self.default_message
+
+
+class NothingToUpdate(Exception):  # noqa: N818
+  """Custom exception to be raised when there's noting to update."""
+
+  __slots__ = ("message",)
+
+  default_message: str = "Nothing to update"
 
   def __init__(self, message: str | None = None) -> None:
     """Set error message."""
@@ -139,7 +148,7 @@ class Movie(Document):
   writers: list[str] | None = None
   tomatoes: MovieTomatoes | None = None
 
-  class Settings:
+  class Settings:  # noqa: D106
     name = settings.collection_name
 
   model_config = ConfigDict(
@@ -210,6 +219,15 @@ async def movie_not_found_error_handler(
   return JSONResponse(client_message, status.HTTP_404_NOT_FOUND)
 
 
+async def movie_nothing_to_update_error_handler(
+  _: Request,
+  e: NothingToUpdate,
+) -> JSONResponse:
+  """Handle nothing to update error."""
+  client_message = {"error": e.message}
+  return JSONResponse(client_message, status.HTTP_400_BAD_REQUEST)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
   """Init and close the mongo db client on app startup/shutdown."""
@@ -225,7 +243,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
   **settings.fastapi_kwargs,
   lifespan=lifespan,
-  exception_handlers={MovieNotFound: movie_not_found_error_handler},
+  exception_handlers={
+    NothingToUpdate: movie_nothing_to_update_error_handler,
+    MovieNotFound: movie_not_found_error_handler,
+  },
 )
 router = APIRouter(prefix="/movies", tags=["movies"])
 
@@ -257,17 +278,17 @@ async def get_movies(
   return Movies(movies=movies)
 
 
-@router.delete("/{movie_id}")
-async def delete_movie(movie_id: PydanticObjectId) -> Response:
+@router.delete("/{movie_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_movie(movie_id: PydanticObjectId) -> None:
   """Delete a movie."""
   if movie := await Movie.get(movie_id):
     await movie.delete()
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return
   raise MovieNotFound
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create(movie: Movie) -> Movie:
+async def create_movie(movie: Movie) -> Movie:
   """Create a movie."""
   return await movie.create()
 
@@ -278,11 +299,9 @@ async def update_movie(
   movie_info: UpdateMovie,
 ) -> Movie:
   """Update a movie."""
-  updated_movie_info = {
-    k: v for k, v in movie_info.model_dump().items() if v is not None
-  }
-  if len(updated_movie_info) < 1:
-    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nothing to update")
+  updated_movie_info = movie_info.model_dump(exclude_none=True)
+  if not updated_movie_info:
+    raise NothingToUpdate
   if movie := await Movie.get(movie_id):
     return await movie.update({"$set": updated_movie_info})
   raise MovieNotFound
