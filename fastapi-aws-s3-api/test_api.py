@@ -5,14 +5,13 @@ from typing import TYPE_CHECKING
 import pytest
 from aiobotocore.session import get_session
 from aiobotocore.stub import AioStubber
-
-from faker import Faker
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
 
 from api import app, get_s3_client
 
 if TYPE_CHECKING:
+  from faker import Faker
   from types_aiobotocore_s3.client import S3Client
 
 
@@ -23,17 +22,6 @@ pytestmark = pytest.mark.anyio
 def anyio_backend() -> str:
   """Backend (asyncio) for pytest to run async tests."""
   return "asyncio"
-
-
-@pytest.fixture
-def faker() -> Faker:
-  """Return new instance of Faker class.
-
-  NOTE: pytest's faker fixture is session-scoped, but we
-        need a function-scoped fixture to have a new instance
-        of Faker for each test.
-  """
-  return Faker()
 
 
 @pytest.fixture(scope="session")
@@ -60,14 +48,16 @@ async def client(s3_client: "S3Client") -> AsyncIterator[AsyncClient]:
 
 
 @pytest.fixture
-def s3_bucket_name(faker: Faker) -> str:
+def s3_bucket_name(faker: "Faker") -> str:
   """Return random AWS S3 bucket name."""
+  faker.seed_instance()
   return f"{faker.user_name()}-bucket"
 
 
 @pytest.fixture
-def s3_object_name(faker: Faker) -> str:
+def s3_object_name(faker: "Faker") -> str:
   """Return random AWS S3 object name."""
+  faker.seed_instance()
   return faker.file_name()
 
 
