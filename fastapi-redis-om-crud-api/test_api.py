@@ -1,15 +1,16 @@
 import logging
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 import pytest
 from api import CreateUser, UpdateUser, app
-from faker import Faker
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
 
-pytestmark = pytest.mark.anyio
+if TYPE_CHECKING:
+  from faker import Faker
 
-faker = Faker()
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture(scope="session")
@@ -28,8 +29,10 @@ async def client() -> AsyncIterator[AsyncClient]:
     yield ac
 
 
-def generate_user_info() -> CreateUser:
+@pytest.fixture
+def user(faker: "Faker") -> CreateUser:
   """Generate random info about user."""
+  faker.seed_instance()
   return CreateUser.model_construct(name=faker.name(), email=faker.email())
 
 
@@ -39,7 +42,6 @@ async def test_health(client: AsyncClient) -> None:
   assert resp.headers["x-status"] == "ok"
 
 
-@pytest.mark.parametrize("user", [generate_user_info()])
 async def test_create_user(client: AsyncClient, user: CreateUser) -> None:
   resp = await client.post("/users", json=user.model_dump())
   assert resp.status_code == status.HTTP_201_CREATED
@@ -50,14 +52,13 @@ async def test_create_user(client: AsyncClient, user: CreateUser) -> None:
   assert "created_at" in resp_json
 
 
-@pytest.mark.parametrize("user_id", [faker.uuid4()])
-async def test_get_unknown_user(client: AsyncClient, user_id: str) -> None:
-  resp = await client.get(f"/users/{user_id}")
+async def test_get_unknown_user(client: AsyncClient) -> None:
+  unknown_user_id = -1
+  resp = await client.get(f"/users/{unknown_user_id}")
   assert resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.parametrize("user", [generate_user_info()])
-async def test_get_valid_user(client: AsyncClient, user: CreateUser) -> None:
+async def test_get_user(client: AsyncClient, user: CreateUser) -> None:
   # Create User
   create_user_resp = await client.post("/users", json=user.model_dump())
   assert create_user_resp.status_code == status.HTTP_201_CREATED
@@ -73,7 +74,15 @@ async def test_get_valid_user(client: AsyncClient, user: CreateUser) -> None:
   assert "created_at" in get_user_resp_json
 
 
-@pytest.mark.parametrize("user", [generate_user_info()])
+async def test_get_users(client: AsyncClient, user: CreateUser) -> None:
+  create_user_resp = await client.post("/users", json=user.model_dump())
+  assert create_user_resp.status_code == status.HTTP_201_CREATED
+  get_users_resp = await client.get("/users")
+  assert get_users_resp.status_code == status.HTTP_200_OK
+  assert get_users_resp.json()["users"]
+  assert get_users_resp.json()["count"] >= 1
+
+
 async def test_delete_user(client: AsyncClient, user: CreateUser) -> None:
   # Create User
   create_user_resp = await client.post("/users", json=user.model_dump())
@@ -87,29 +96,23 @@ async def test_delete_user(client: AsyncClient, user: CreateUser) -> None:
   assert get_user_resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.parametrize(("user", "user_id"), [(UpdateUser(), faker.uuid4())])
-async def test_update_unknown_user(
-  client: AsyncClient, user: UpdateUser, user_id: str
-) -> None:
-  resp = await client.patch(f"/users/{user_id}", json=user.model_dump())
+async def test_update_unknown_user(client: AsyncClient, user: CreateUser) -> None:
+  unknown_user_id = -1
+  resp = await client.patch(f"/users/{unknown_user_id}", json=user.model_dump())
   assert resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.parametrize(
-  ("user", "new_user_name"), [(generate_user_info(), faker.name())]
-)
-async def test_update_user_name(
-  client: AsyncClient, user: CreateUser, new_user_name: str
-) -> None:
+async def test_update_user_name(client: AsyncClient, user: CreateUser) -> None:
   # Create User
   create_user_resp = await client.post("/users", json=user.model_dump())
   assert create_user_resp.status_code == status.HTTP_201_CREATED
   create_user_resp_json = create_user_resp.json()
   user_id = create_user_resp_json["pk"]
   # Update User
-  updated_user = UpdateUser(name=new_user_name)
+  updated_user = UpdateUser.model_construct(name=user.name + " Updated")
   updated_user_resp = await client.patch(
-    f"/users/{user_id}", json=updated_user.model_dump()
+    f"/users/{user_id}",
+    json=updated_user.model_dump(),
   )
   assert updated_user_resp.status_code == status.HTTP_200_OK
   # Get User
@@ -121,11 +124,10 @@ async def test_update_user_name(
   assert get_user_resp_json["email"] == create_user_resp_json["email"]
 
 
-@pytest.mark.parametrize(
-  ("user", "new_user_email"), [(generate_user_info(), faker.email())]
-)
 async def test_update_user_email(
-  client: AsyncClient, user: CreateUser, new_user_email: str
+  client: AsyncClient,
+  user: CreateUser,
+  faker: "Faker",
 ) -> None:
   # Create User
   create_user_resp = await client.post("/users", json=user.model_dump())
@@ -133,9 +135,10 @@ async def test_update_user_email(
   create_user_resp_json = create_user_resp.json()
   user_id = create_user_resp_json["pk"]
   # Update User
-  updated_user = UpdateUser(email=new_user_email)
+  updated_user = UpdateUser.model_construct(email=faker.email())
   updated_user_resp = await client.patch(
-    f"/users/{user_id}", json=updated_user.model_dump()
+    f"/users/{user_id}",
+    json=updated_user.model_dump(),
   )
   assert updated_user_resp.status_code == status.HTTP_200_OK
   # Get User
@@ -147,12 +150,10 @@ async def test_update_user_email(
   assert get_user_resp_json["email"] == updated_user.email
 
 
-@pytest.mark.parametrize(
-  ("user", "updated_user"),
-  [(generate_user_info(), generate_user_info())],
-)
 async def test_update_user(
-  client: AsyncClient, user: CreateUser, updated_user: UpdateUser
+  client: AsyncClient,
+  user: CreateUser,
+  faker: "Faker",
 ) -> None:
   # Create User
   create_user_resp = await client.post("/users", json=user.model_dump())
@@ -160,6 +161,10 @@ async def test_update_user(
   create_user_resp_json = create_user_resp.json()
   user_id = create_user_resp_json["pk"]
   # Update User
+  updated_user = UpdateUser.model_construct(
+    name=faker.name(),
+    email=faker.email(),
+  )
   updated_user_resp = await client.patch(
     f"/users/{user_id}", json=updated_user.model_dump()
   )
