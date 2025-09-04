@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Final, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Final, TypedDict, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response, status
@@ -112,32 +112,26 @@ def configure_logging() -> "Logger":
 class Base(DeclarativeBase):
   """Base declarative database class."""
 
+  type_annotation_map: ClassVar[dict[type, Any]] = {
+    datetime: DateTime(timezone=True),
+    str: String(MAX_USER_NAME_LENGTH),
+  }
+
 
 class User(Base):
   """Database model to represent a user."""
 
   __tablename__ = "users"
+
   id: Mapped[str] = mapped_column(
     String(USER_ID_LENGTH),
     primary_key=True,
     default=lambda: str(uuid4()),
   )
-  name: Mapped[str] = mapped_column(
-    String(MAX_USER_NAME_LENGTH),
-    nullable=False,
-  )
-  email: Mapped[str] = mapped_column(
-    String(MAX_USER_EMAIL_LENGTH),
-    nullable=False,
-    unique=True,
-    index=True,
-  )
-  created_at: Mapped[datetime] = mapped_column(
-    DateTime(timezone=True),
-    server_default=func.now(),
-  )
+  name: Mapped[str] = mapped_column(nullable=False)
+  email: Mapped[str] = mapped_column(nullable=False, unique=True, index=True)
+  created_at: Mapped[datetime] = mapped_column(server_default=func.now())
   updated_at: Mapped[datetime] = mapped_column(
-    DateTime(timezone=True),
     server_default=func.now(),
     onupdate=func.now(),
   )
