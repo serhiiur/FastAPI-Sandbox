@@ -9,19 +9,20 @@ from typing import (
   Any,
   Final,
   Literal,
+  TypeAlias,
   TypedDict,
   cast,
 )
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, FastAPI, Path, Request, Response, status
+from fastapi import APIRouter, Depends, FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
 from fastapi_cache.decorator import cache
 from fastcrud import FastCRUD
-from pydantic import BaseModel, EmailStr
+from pydantic import AfterValidator, BaseModel, EmailStr
 from pydantic_settings import BaseSettings
 from redis.asyncio import ConnectionPool, Redis
 from sqlalchemy import func
@@ -209,7 +210,7 @@ class UpdateUser(SQLModel):
 
 
 class UserSelectFilters(BaseModel):
-  """Schema used to select users frm the database using filters."""
+  """Schema used to select users from the database using filters."""
 
   limit: int = Field(
     default=10,
@@ -231,11 +232,11 @@ class UserSelectFilters(BaseModel):
   )
 
 
-class UsersResponse(BaseModel):
+class Users(BaseModel):
   """Schema used to display multiple users from the database."""
 
-  data: list[User] = Field(description="List of users based on the provided filters")
-  total_count: int = Field(description="Total users in the database")
+  data: list[User] = Field(description="List of users  from the database")
+  total_count: int = Field(description="Total users returned")
 
 
 def users_cache_key_builder(
@@ -253,7 +254,7 @@ def users_cache_key_builder(
     - specific user: fastapi-cache:user:ad7485b4-0275-411a-8b06-b7c84bc2cf99
     - regular key:   fastapi-cache:get:/users:[('limit', '10'), ('offset', '0')]
   """
-  if user := request.path_params.get("userId"):
+  if user := request.path_params.get("user_id"):
     return get_user_cache_key(user)
   key_params = ":".join(
     [
@@ -275,7 +276,7 @@ async def invalidate_cache(
   redis: Annotated[Redis, Depends(get_redis)],
 ) -> None:
   """Invalidate a key in redis representing a user."""
-  if user_id := request.path_params.get("userId"):
+  if user_id := request.path_params.get("user_id"):
     user_cache_key = get_user_cache_key(user_id)
     await redis.delete(user_cache_key)
 
@@ -376,9 +377,8 @@ router = APIRouter(prefix="/users", tags=["users"])
 crud = FastCRUD(User)
 
 # https://fastapi.tiangolo.com/tutorial/dependencies/#share-annotated-dependencies
-DbSession = Annotated[AsyncSession, Depends(get_session)]
-
-UserID = Annotated[UUID, Path(alias="userId")]
+DbSession: TypeAlias = Annotated[AsyncSession, Depends(get_session)]
+UserID: TypeAlias = Annotated[UUID, AfterValidator(str)]
 
 
 @app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
@@ -390,25 +390,22 @@ async def health() -> Response:
   )
 
 
-@router.get(
-  "/{userId}",  # noqa: FAST003
-  response_model=User,
-)
+@router.get("/{user_id}", response_model=User)
 @cache()
 async def get_user(user_id: UserID, db: DbSession) -> dict[str, Any]:
   """Get information about user from the database."""
-  if user := await crud.get(db, id=str(user_id)):
+  if user := await crud.get(db, id=user_id):
     return user
   raise NoResultFound
 
 
-@router.get("", response_model=UsersResponse)
+@router.get("", response_model=Users)
 @cache()
 async def get_users(
   filters: Annotated[UserSelectFilters, Depends()],
   db: DbSession,
 ) -> dict[str, list[dict[str, Any]] | int]:
-  """Get information about users from the database."""
+  """Get info about users from the database."""
   return await crud.get_multi(db, **filters.model_dump())
 
 
@@ -419,19 +416,16 @@ async def create_user(user: CreateUser, db: DbSession) -> User:
 
 
 @router.delete(
-  "/{userId}",  # noqa: FAST003
+  "/{user_id}",
   status_code=status.HTTP_204_NO_CONTENT,
   dependencies=[Depends(invalidate_cache)],
 )
 async def delete_user(user_id: UserID, db: DbSession) -> None:
   """Delete a user from the database."""
-  return await crud.delete(db, id=str(user_id))
+  await crud.delete(db, id=user_id)
 
 
-@router.patch(
-  "/{userId}",  # noqa: FAST003
-  dependencies=[Depends(invalidate_cache)],
-)
+@router.patch("/{user_id}", dependencies=[Depends(invalidate_cache)])
 async def update_user(
   user_id: UserID,
   user: UpdateUser,
@@ -441,7 +435,7 @@ async def update_user(
   res = await crud.update(
     db,
     object=user.model_dump(exclude_defaults=True),
-    id=str(user_id),
+    id=user_id,
     schema_to_select=User,
     return_as_model=True,
   )
