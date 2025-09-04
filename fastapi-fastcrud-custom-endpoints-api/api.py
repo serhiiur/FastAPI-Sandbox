@@ -9,6 +9,7 @@ from typing import (
   Any,
   Final,
   Literal,
+  TypeAlias,
   TypedDict,
   cast,
 )
@@ -18,7 +19,6 @@ from fastapi import (
   APIRouter,
   Depends,
   FastAPI,
-  Path,
   Request,
   Response,
   status,
@@ -26,7 +26,7 @@ from fastapi import (
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastcrud import FastCRUD
-from pydantic import BaseModel, EmailStr
+from pydantic import AfterValidator, BaseModel, EmailStr
 from pydantic_settings import BaseSettings
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError, NoResultFound
@@ -179,7 +179,7 @@ class UpdateUser(SQLModel):
 
 
 class UserSelectFilters(BaseModel):
-  """Schema used to select users frm the database using filters."""
+  """Schema used to select users from the database using filters."""
 
   limit: int = Field(
     default=10,
@@ -201,11 +201,11 @@ class UserSelectFilters(BaseModel):
   )
 
 
-class UsersResponse(BaseModel):
+class Users(BaseModel):
   """Schema used to display multiple users from the database."""
 
-  data: list[User] = Field(description="List of users based on the provided filters")
-  total_count: int = Field(description="Total users in the database")
+  data: list[User] = Field(description="List of users  from the database")
+  total_count: int = Field(description="Total users returned")
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -255,7 +255,7 @@ async def unexpected_error_handler(
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
   """Run database migrations and init application state."""
   async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)
@@ -278,9 +278,8 @@ router = APIRouter(prefix="/users", tags=["users"])
 crud = FastCRUD(User)
 
 # https://fastapi.tiangolo.com/tutorial/dependencies/#share-annotated-dependencies
-DbSession = Annotated[AsyncSession, Depends(get_session)]
-
-UserID = Annotated[UUID, Path(alias="userId")]
+DbSession: TypeAlias = Annotated[AsyncSession, Depends(get_session)]
+UserID: TypeAlias = Annotated[UUID, AfterValidator(str)]
 
 
 @app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
@@ -292,10 +291,7 @@ async def health() -> Response:
   )
 
 
-@router.get(
-  "/{userId}",  # noqa: FAST003
-  response_model=User,
-)
+@router.get("/{user_id}", response_model=User)
 async def get_user(user_id: UserID, db: DbSession) -> dict[str, Any]:
   """Get information about user from the database."""
   if user := await crud.get(db, id=str(user_id)):
@@ -303,33 +299,28 @@ async def get_user(user_id: UserID, db: DbSession) -> dict[str, Any]:
   raise NoResultFound
 
 
-@router.get("", response_model=UsersResponse)
+@router.get("", response_model=Users)
 async def get_users(
   filters: Annotated[UserSelectFilters, Depends()],
   db: DbSession,
 ) -> dict[str, list[dict[str, Any]] | int]:
-  """Get information about users from the database."""
+  """Get info about users from the database."""
   return await crud.get_multi(db, **filters.model_dump())
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_user(user: CreateUser, db: DbSession) -> User:
+async def c(user: CreateUser, db: DbSession) -> User:
   """Add a new user to the database."""
   return await crud.create(db, user)
 
 
-@router.delete(
-  "/{userId}",  # noqa: FAST003
-  status_code=status.HTTP_204_NO_CONTENT,
-)
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(user_id: UserID, db: DbSession) -> None:
   """Delete a user from the database."""
-  return await crud.delete(db, id=str(user_id))
+  await crud.delete(db, id=str(user_id))
 
 
-@router.patch(
-  "/{userId}",  # noqa: FAST003
-)
+@router.patch("/{user_id}")
 async def update_user(
   user_id: UserID,
   user: UpdateUser,
