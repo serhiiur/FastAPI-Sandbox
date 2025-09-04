@@ -79,7 +79,9 @@ async def test_fetch_all_posts(
   httpx_mock.add_response(json=mock_posts)
   resp = await client.get("/posts")
   assert resp.status_code == status.HTTP_200_OK
-  assert mock_posts == resp.json()
+  resp_json = resp.json()
+  assert resp_json["posts"] == mock_posts
+  assert resp_json["count"] == len(mock_posts)
 
 
 # async def test_get_unknown_post(
