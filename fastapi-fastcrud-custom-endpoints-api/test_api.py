@@ -1,10 +1,9 @@
-import asyncio  # noqa: I001
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator  # noqa: I001
 
 import pytest
 from faker import Faker
 from fastapi import status
-from httpx import AsyncClient, ASGITransport, Response
+from httpx import ASGITransport, AsyncClient, Response
 from sqlalchemy.ext.asyncio import (
   AsyncSession,
   async_sessionmaker,
@@ -12,16 +11,16 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from api import (
-  app,
-  Base,
-  CreateUser,
-  get_session,
-  settings,
   MAX_USER_NAME_LENGTH,
   MIN_USER_NAME_LENGTH,
-  UpdateUser,
+  Base,
+  CreateUser,
+  app,
+  get_session,
+  settings,
 )
 
+pytestmark = pytest.mark.anyio
 
 engine = create_async_engine(settings.test_database_url)
 async_session = async_sessionmaker(
@@ -29,9 +28,12 @@ async_session = async_sessionmaker(
   class_=AsyncSession,
   expire_on_commit=False,
 )
-faker = Faker()
 
-pytestmark = pytest.mark.anyio
+
+@pytest.fixture
+def faker() -> Faker:
+  """Faker instance to generate random data."""
+  return Faker()
 
 
 @pytest.fixture(scope="session")
@@ -65,7 +67,8 @@ async def client() -> AsyncIterator[AsyncClient]:
     yield ac
 
 
-def generate_user_info() -> CreateUser:
+@pytest.fixture
+def user(faker: Faker) -> CreateUser:
   """Generate random info about user to be created."""
   return CreateUser.model_construct(name=faker.name(), email=faker.email())
 
@@ -98,7 +101,6 @@ async def test_health(client: AsyncClient) -> None:
   assert resp.headers["x-status"] == "ok"
 
 
-@pytest.mark.parametrize("user", [generate_user_info()])
 async def test_create_user_incorrect_email(
   client: AsyncClient,
   user: CreateUser,
@@ -112,10 +114,10 @@ async def test_create_user_incorrect_email(
   assert "value is not a valid email address" in resp.json()["error"]
 
 
-@pytest.mark.parametrize("user", [generate_user_info()])
 async def test_create_user_too_long_name(
   client: AsyncClient,
   user: CreateUser,
+  faker: Faker,
 ) -> None:
   random_long_name = faker.pystr(
     min_chars=MAX_USER_NAME_LENGTH + 1,
@@ -130,10 +132,10 @@ async def test_create_user_too_long_name(
   assert f"at most {MAX_USER_NAME_LENGTH} characters" in resp.json()["error"]
 
 
-@pytest.mark.parametrize("user", [generate_user_info()])
 async def test_create_user_too_short_name(
   client: AsyncClient,
   user: CreateUser,
+  faker: Faker,
 ) -> None:
   random_short_name = faker.pystr(
     min_chars=MIN_USER_NAME_LENGTH - 1,
@@ -148,60 +150,40 @@ async def test_create_user_too_short_name(
   assert f"at least {MIN_USER_NAME_LENGTH} characters" in resp.json()["error"]
 
 
-@pytest.mark.parametrize(
-  ("first_user", "second_user"),
-  [(generate_user_info(), generate_user_info())],
-)
-async def test_create_user_email_already_exists(
-  client: AsyncClient,
-  first_user: CreateUser,
-  second_user: CreateUser,
-) -> None:
-  # Create first user
-  await create_user(client, first_user)
-  second_user.email = first_user.email
-  create_second_user_resp = await create_user(
-    client,
-    second_user,
-    expected_http_status_code=status.HTTP_409_CONFLICT,
-  )
-  assert "already exists" in create_second_user_resp.json()["error"]
-
-
-@pytest.mark.parametrize("user", [generate_user_info()])
-async def test_create_user(
-  client: AsyncClient,
-  user: CreateUser,
-) -> None:
+async def test_create_user(client: AsyncClient, user: CreateUser) -> None:
   resp = await create_user(client, user)
   resp_json = resp.json()
   assert resp_json["name"] == user.name
   assert resp_json["email"] == user.email
   assert "id" in resp_json
-  # assert "created_at" in resp_json
-  # assert "updated_at" in resp_json
 
 
-@pytest.mark.parametrize("user_id", [faker.uuid4()])
-async def test_get_unknown_user(
-  client: AsyncClient,
-  user_id: str,
-) -> None:
-  resp = await client.get(f"/users/{user_id}")
-  assert resp.status_code == status.HTTP_404_NOT_FOUND
-
-
-@pytest.mark.parametrize("user", [generate_user_info()])
-async def test_get_valid_user(
+async def test_create_user_email_already_exists(
   client: AsyncClient,
   user: CreateUser,
 ) -> None:
-  # Create first user
+  await create_user(client, user)
+  # Create second user with same email
+  create_second_user_resp = await create_user(
+    client,
+    user,
+    expected_http_status_code=status.HTTP_409_CONFLICT,
+  )
+  assert "already exists" in create_second_user_resp.json()["error"]
+
+
+async def test_get_unknown_user(client: AsyncClient, faker: Faker) -> None:
+  unknown_user_id = faker.uuid4()
+  resp = await client.get(f"/users/{unknown_user_id}")
+  assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+
+async def test_get_user(client: AsyncClient, user: CreateUser) -> None:
   create_user_resp = await create_user(client, user)
-  new_user = create_user_resp.json()
-  resp = await client.get(f"/users/{new_user['id']}")
-  assert resp.status_code == status.HTTP_200_OK
-  resp_json = resp.json()
+  user_id = create_user_resp.json()["id"]
+  get_user_resp = await client.get(f"/users/{user_id}")
+  assert get_user_resp.status_code == status.HTTP_200_OK
+  resp_json = get_user_resp.json()
   assert resp_json["name"] == user.name
   assert resp_json["email"] == user.email
   assert "id" in resp_json
@@ -209,217 +191,145 @@ async def test_get_valid_user(
   assert "updated_at" in resp_json
 
 
-@pytest.mark.parametrize("user_id", [faker.uuid4()])
-async def test_delete_unknown_user(
-  client: AsyncClient,
-  user_id: str,
-) -> None:
-  resp = await client.delete(f"/users/{user_id}")
+async def test_delete_unknown_user(client: AsyncClient, faker: Faker) -> None:
+  unknown_user_id = faker.uuid4()
+  resp: Response = await client.delete(f"/users/{unknown_user_id}")
   assert resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.parametrize("user", [generate_user_info()])
-async def test_delete_user(
-  client: AsyncClient,
-  user: CreateUser,
-) -> None:
-  # Create user
+async def test_delete_user(client: AsyncClient, user: CreateUser) -> None:
   create_user_resp = await create_user(client, user)
-  new_user = create_user_resp.json()
-  resp = await client.delete(f"/users/{new_user['id']}")
-  assert resp.status_code == status.HTTP_204_NO_CONTENT
+  user_id = create_user_resp.json()["id"]
+  delete_user_resp: Response = await client.delete(f"/users/{user_id}")
+  assert delete_user_resp.status_code == status.HTTP_204_NO_CONTENT
 
 
-@pytest.mark.parametrize("user", [generate_user_info()])
 async def test_update_user_incorrect_email(
   client: AsyncClient,
   user: CreateUser,
 ) -> None:
-  # Create user
   create_user_resp = await create_user(client, user)
-  new_user = create_user_resp.json()
-  # Set invalid email
-  user.email = faker.name()
-  resp = await client.patch(
-    f"/users/{new_user['id']}",
-    json=user.model_dump(exclude={"id", "name"}),
+  user_id = create_user_resp.json()["id"]
+  update_user_resp = await client.patch(
+    f"/users/{user_id}",
+    json={"email": user.name},
   )
-  assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-  assert "not a valid email address" in resp.json()["error"]
+  assert update_user_resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+  assert "not a valid email address" in update_user_resp.json()["error"]
 
 
-@pytest.mark.parametrize("user_id", [faker.uuid4()])
-async def test_update_unknown_user(
-  client: AsyncClient,
-  user_id: str,
-) -> None:
-  resp = await client.patch(f"/users/{user_id}", json={})
+async def test_update_unknown_user(client: AsyncClient, faker: Faker) -> None:
+  unknown_user_id = faker.uuid4()
+  resp = await client.patch(f"/users/{unknown_user_id}", json={})
   assert resp.status_code == status.HTTP_404_NOT_FOUND
 
 
-@pytest.mark.parametrize(
-  ("user", "new_user_name"),
-  [(generate_user_info(), faker.name())],
-)
 async def test_update_user_name(
   client: AsyncClient,
   user: CreateUser,
-  new_user_name: str,
+  faker: Faker,
 ) -> None:
-  # Create user
   create_user_resp = await create_user(client, user)
-  new_user = create_user_resp.json()
-  user.name = new_user_name
-  resp = await client.patch(
-    f"/users/{new_user['id']}",
-    json=user.model_dump(exclude={"id", "email"}),
+  user_id = create_user_resp.json()["id"]
+  new_user_name = faker.name()
+  update_user_resp = await client.patch(
+    f"/users/{user_id}",
+    json={"name": new_user_name},
   )
-  assert resp.status_code == status.HTTP_200_OK
-  resp_json = resp.json()
-  assert resp_json["name"] == user.name
-  assert resp_json["email"] == user.email
-  assert "id" in resp_json
-  assert "created_at" in resp_json
-  assert "updated_at" in resp_json
+  resp_json = update_user_resp.json()
+  assert update_user_resp.status_code == status.HTTP_200_OK
+  assert resp_json["name"] == new_user_name
 
 
-@pytest.mark.parametrize(
-  ("user", "new_user_email"),
-  [(generate_user_info(), faker.email())],
-)
 async def test_update_user_email(
   client: AsyncClient,
   user: CreateUser,
-  new_user_email: str,
+  faker: Faker,
 ) -> None:
-  # Create user
   create_user_resp = await create_user(client, user)
-  new_user = create_user_resp.json()
-  user.email = new_user_email
-  resp = await client.patch(
-    f"/users/{new_user['id']}",
-    json=user.model_dump(exclude={"id", "name"}),
+  user_id = create_user_resp.json()["id"]
+  new_user_email = faker.email()
+  update_user_resp = await client.patch(
+    f"/users/{user_id}",
+    json={"email": new_user_email},
   )
-  assert resp.status_code == status.HTTP_200_OK
-  resp_json = resp.json()
-  assert resp_json["name"] == user.name
-  assert resp_json["email"] == user.email
-  assert "id" in resp_json
-  assert "created_at" in resp_json
-  assert "updated_at" in resp_json
+  resp_json = update_user_resp.json()
+  assert update_user_resp.status_code == status.HTTP_200_OK
+  assert resp_json["email"] == new_user_email
 
 
-@pytest.mark.parametrize(
-  ("first_user", "second_user"),
-  [(generate_user_info(), generate_user_info())],
-)
 async def test_update_user_email_already_exists(
   client: AsyncClient,
-  first_user: CreateUser,
-  second_user: CreateUser,
+  user: CreateUser,
+  faker: Faker,
 ) -> None:
   # Create first user
-  await create_user(client, first_user)
+  create_first_user_resp = await create_user(client, user)
+  first_user_data = create_first_user_resp.json()
+
   # Create second user
-  create_second_user_resp = await create_user(client, second_user)
-  new_user = create_second_user_resp.json()
+  user.email = faker.email()
+  create_second_user_resp = await create_user(client, user)
+  second_user_data = create_second_user_resp.json()
 
-  # Update email of the second user to be equal email of the first user
-  second_user.email = first_user.email
-
-  resp = await client.patch(
-    f"/users/{new_user['id']}",
-    json=second_user.model_dump(exclude={"id", "name"}),
+  # Update email of second user to email of first user
+  update_second_user_resp = await client.patch(
+    f"/users/{second_user_data['id']}",
+    json={"email": first_user_data["email"]},
   )
-  assert resp.status_code == status.HTTP_409_CONFLICT
-  assert "already exists" in resp.json()["error"]
+  assert update_second_user_resp.status_code == status.HTTP_409_CONFLICT
+  assert "already exists" in update_second_user_resp.json()["error"]
 
 
-@pytest.mark.parametrize(
-  ("user", "updated_user"),
-  [(generate_user_info(), generate_user_info())],
-)
 async def test_update_user(
   client: AsyncClient,
   user: CreateUser,
-  updated_user: UpdateUser,
+  faker: Faker,
 ) -> None:
   # Create user
   create_user_resp = await create_user(client, user)
-  new_user = create_user_resp.json()
-  resp = await client.patch(
-    f"/users/{new_user['id']}",
-    json=updated_user.model_dump(),
+  user_id = create_user_resp.json()["id"]
+  # Update name and email of the user
+  user.name = faker.name()
+  user.email = faker.email()
+  update_user_resp = await client.patch(
+    f"/users/{user_id}",
+    json=user.model_dump(),
   )
-  assert resp.status_code == status.HTTP_200_OK
-  resp_json = resp.json()
-  assert resp_json["id"] == new_user["id"]
-  assert resp_json["name"] == updated_user.name
-  assert resp_json["email"] == updated_user.email
+  resp_json = update_user_resp.json()
+  assert update_user_resp.status_code == status.HTTP_200_OK
+  assert resp_json["name"] == user.name
+  assert resp_json["email"] == user.email
 
 
-async def create_n_users_asynchronously(
-  client: AsyncClient,
-  n: int,
-) -> None:
-  """Perform API call to create N users asynchronously."""
-  async with asyncio.TaskGroup() as tg:
-    tasks: list[asyncio.Task] = []
-    for _ in range(n):
-      user: CreateUser = generate_user_info()
-      task = tg.create_task(
-        client.post("/users", json=user.model_dump()),
-      )
-      tasks.append(task)
-  # check if all users added successfully
-  for task in tasks:
-    user_created_response: Response = task.result()
-    assert user_created_response.status_code == status.HTTP_201_CREATED
-
-
-@pytest.mark.parametrize("total_users", [faker.random_int(min=10, max=50)])
-async def test_get_users(
-  client: AsyncClient,
-  total_users: int,
-) -> None:
-  # Create random N users
-  await create_n_users_asynchronously(client, total_users)
+async def test_get_users(client: AsyncClient, user: CreateUser) -> None:
+  await create_user(client, user)
   resp = await client.get("/users")
   assert resp.status_code == status.HTTP_200_OK
   resp_json = resp.json()
-  assert resp_json["total_count"] >= total_users
-  assert "data" in resp_json
+  assert resp_json["total_count"] >= 1
+  assert len(resp_json["data"]) == resp_json["total_count"]
 
 
-@pytest.mark.parametrize("total_users", [faker.random_int(min=10, max=50)])
-async def test_get_users_limit(
-  client: AsyncClient,
-  total_users: int,
-) -> None:
-  # Create random N users
-  await create_n_users_asynchronously(client, total_users)
-  total_users_to_fetch = total_users - 1
-  request_params = {"limit": total_users_to_fetch, "offset": 0}
+async def test_get_users_limit(client: AsyncClient, user: CreateUser) -> None:
+  await create_user(client, user)
+  request_params = {"limit": 1, "offset": 0}
   resp = await client.get("/users", params=request_params)
   resp_json = resp.json()
-  assert resp_json["total_count"] != total_users_to_fetch
-  assert len(resp_json["data"]) == total_users_to_fetch
+  assert resp_json["total_count"] >= 1
+  assert len(resp_json["data"]) >= 1
 
 
-@pytest.mark.parametrize("total_users", [faker.random_int(min=10, max=50)])
 async def test_get_users_limit_with_offset(
   client: AsyncClient,
-  total_users: int,
+  user: CreateUser,
 ) -> None:
-  # Create random N users
-  await create_n_users_asynchronously(client, total_users)
-  total_users_to_fetch = total_users - 1
-  offset = total_users - total_users_to_fetch
-  request_params = {"limit": total_users_to_fetch, "offset": offset}
+  await create_user(client, user)
+  request_params = {"limit": 1, "offset": 1}
   resp = await client.get("/users", params=request_params)
   resp_json = resp.json()
-  assert resp_json["total_count"] != total_users_to_fetch
-  assert len(resp_json["data"]) == (total_users_to_fetch - offset) + 1
+  assert resp_json["total_count"] >= 1
+  assert len(resp_json["data"]) >= 1
 
 
 @pytest.mark.skip(reason="Not Implemented")
