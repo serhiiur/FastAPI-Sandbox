@@ -293,8 +293,8 @@ async def health() -> Response:
 
 @router.get("/{user_id}", response_model=User)
 async def get_user(user_id: UserID, db: DbSession) -> dict[str, Any]:
-  """Get information about user from the database."""
-  if user := await crud.get(db, id=str(user_id)):
+  """Get info about user from the database."""
+  if user := await crud.get(db, id=user_id):
     return user
   raise NoResultFound
 
@@ -317,7 +317,7 @@ async def c(user: CreateUser, db: DbSession) -> User:
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(user_id: UserID, db: DbSession) -> None:
   """Delete a user from the database."""
-  await crud.delete(db, id=str(user_id))
+  await crud.delete(db, id=user_id)
 
 
 @router.patch("/{user_id}")
@@ -330,7 +330,7 @@ async def update_user(
   res = await crud.update(
     db,
     object=user.model_dump(exclude_defaults=True),
-    id=str(user_id),
+    id=user_id,
     schema_to_select=User,
     return_as_model=True,
   )
