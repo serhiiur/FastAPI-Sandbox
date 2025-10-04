@@ -1,5 +1,5 @@
 ## Introduction
-This provides a collection of snippets and implementations of APIs based on FastAPI.
+Another collection of snippets and implementations for FastAPI.
 
 
 ## Navigation
