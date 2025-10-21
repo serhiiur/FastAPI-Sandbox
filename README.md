@@ -16,6 +16,7 @@ APIs:
 - [FastCRUD + SQLModel (custom routes)](fastcrud-api-with-custom-routes)
 - [FastCRUD + SQLModel + FastAPI Cache(Redis)](crud-api-with-redis-cache)
 - [FastCRUD + SQLModel + SQLAdmin](fastcrud-sqlalchemy-api)
+- [FastAPI + Tortoise ORM](tortoise-orm-crud-api)
 - [FastAPI + Redis OM CRUD API](redis-om-crud-api)
 - [FastAPI + Beanie(MongoDB) CRUD API](mongodb-crud-api-1)
 - [FastAPI + Motor(MongoDB) CRUD API](mongodb-crud-api-2)
@@ -23,6 +24,7 @@ APIs:
 - [FastAPI + AWS S3 (aiobotocore)](aws-s3-management-api)
 - [FastAPI + GraphQL(Graphene) CRUD API](graphql-graphene-crud-api)
 - [FastAPI + Websockets + Redis Streams](websockets-with-redis-streams/)
+
 
 
 ## Notes
@@ -64,7 +66,7 @@ APIs:
 
 
 
-## Useful Links
+## References
 - StackOverflow:
   - [How to Upload File using FastAPI?](https://stackoverflow.com/questions/63048825/how-to-upload-file-using-fastapi)
   - [FastAPI UploadFile is slow compared to Flask](https://stackoverflow.com/questions/65342833/fastapi-uploadfile-is-slow-compared-to-flask/70667530#70667530)
@@ -81,6 +83,7 @@ APIs:
   - [FastAPI boilerplate (SQLmodel version)](https://github.com/benavlabs/SQLModel-boilerplate/tree/main)
   - [FastAPI Cache. Tool to cache FastAPI endpoint and function results](https://github.com/long2ice/fastapi-cache)
   - [Redis OM](github.com/redis/redis-om-python)
+  - [Tortoise ORM](https://github.com/tortoise/tortoise-orm)
   - [101 FastAPI Tips by The FastAPI Expert](https://github.com/Kludex/fastapi-tips)
 
 - Docs:
