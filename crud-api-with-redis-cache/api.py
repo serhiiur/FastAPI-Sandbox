@@ -129,11 +129,7 @@ def get_settings() -> Settings:
 settings = get_settings()
 
 engine = create_async_engine(settings.database_url, echo=settings.debug)
-async_session = async_sessionmaker(
-  engine,
-  class_=AsyncSession,
-  expire_on_commit=False,
-)
+async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 def configure_logging() -> "Logger":
