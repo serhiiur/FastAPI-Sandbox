@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, ClassVar, Final, TypedDict, cast
+from typing import TYPE_CHECKING, Any, ClassVar, TypedDict, cast
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response, status
@@ -11,7 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastcrud import crud_router
 from fastcrud.exceptions.http_exceptions import DuplicateValueException
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr
 from pydantic_settings import BaseSettings
 from sqlalchemy import DateTime, String, func
 from sqlalchemy.exc import IntegrityError, NoResultFound
@@ -24,12 +24,6 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 if TYPE_CHECKING:
   from logging import Logger
-
-# Constants
-MIN_USER_NAME_LENGTH: Final[int] = 2
-MAX_USER_NAME_LENGTH: Final[int] = 255
-MAX_USER_EMAIL_LENGTH: Final[int] = 255
-USER_ID_LENGTH: Final[int] = 36
 
 
 class FastAPIKwargs(TypedDict):
@@ -56,10 +50,10 @@ class Settings(BaseSettings):
   title: str = "Users Management App"
   description: str = "CRUD Application to Manage Users"
   version: str = "0.0.1"
-  debug: bool = False
+  debug: bool = True
 
   # Logging settings
-  log_name: str = __name__
+  log_name: str = "api"
   log_level: int = logging.INFO
   log_format: str = "%(levelname)s - %(name)s - %(asctime)s - %(message)s"
   log_datefmt: str = "%Y-%m-%d %H:%M:%S"
@@ -96,17 +90,14 @@ def get_settings() -> Settings:
 
 settings = get_settings()
 engine = create_async_engine(settings.database_url, echo=settings.debug)
-async_session = async_sessionmaker(
-  engine,
-  class_=AsyncSession,
-  expire_on_commit=False,
-)
+async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
-def configure_logging() -> "Logger":
+def configure_logging(name: str, options: LoggingKwargs | None = None) -> "Logger":
   """Configure app logging and return logger object."""
-  logging.basicConfig(**settings.logging_kwargs)
-  return logging.getLogger(settings.log_name)
+  if options is not None:
+    logging.basicConfig(**options)
+  return logging.getLogger(name)
 
 
 class Base(DeclarativeBase):
@@ -114,17 +105,17 @@ class Base(DeclarativeBase):
 
   type_annotation_map: ClassVar[dict[type, Any]] = {
     datetime: DateTime(timezone=True),
-    str: String(MAX_USER_NAME_LENGTH),
+    str: String(255),
   }
 
 
 class User(Base):
-  """Database model to represent a user."""
+  """Model to represent a user in the database."""
 
   __tablename__ = "users"
 
   id: Mapped[str] = mapped_column(
-    String(USER_ID_LENGTH),
+    String(36),
     primary_key=True,
     default=lambda: str(uuid4()),
   )
@@ -140,27 +131,15 @@ class User(Base):
 class CreateUser(BaseModel):
   """Schema to create a user."""
 
-  name: str = Field(
-    description="Name of the user",
-    min_length=MIN_USER_NAME_LENGTH,
-    max_length=MAX_USER_NAME_LENGTH,
-  )
-  email: EmailStr = Field(description="Email of the user")
+  name: str
+  email: EmailStr
 
 
 class UpdateUser(BaseModel):
   """Schema to update a user."""
 
-  name: str | None = Field(
-    default=None,
-    description="New name of the user",
-    min_length=MIN_USER_NAME_LENGTH,
-    max_length=MAX_USER_NAME_LENGTH,
-  )
-  email: EmailStr | None = Field(
-    default=None,
-    description="New email of the user",
-  )
+  name: str | None = None
+  email: EmailStr | None = None
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -170,12 +149,10 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 async def db_not_found_error_handler(
-  request: Request,
-  e: NoResultFound,
+  _: Request,
+  e: NoResultFound,  # noqa: ARG001
 ) -> JSONResponse:
   """Database. Not found error handler."""
-  logger = cast("Logger", request.app.state.logger)
-  logger.info("Database Not Found Error: %s", e)
   client_message = {"error": "User not found"}
   return JSONResponse(client_message, status.HTTP_404_NOT_FOUND)
 
@@ -192,12 +169,10 @@ async def db_integrity_error_handler(
 
 
 async def validation_error_handler(
-  request: Request,
+  _: Request,
   e: RequestValidationError,
 ) -> JSONResponse:
   """Pydantic validation error handler."""
-  logger = cast("Logger", request.app.state.logger)
-  logger.info("Data Validation Error: %s", e)
   client_message = {"error": e.errors()[0]["msg"]}
   return JSONResponse(client_message, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
@@ -216,11 +191,10 @@ async def unexpected_error_handler(
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
   """Run database migrations and init application state."""
-  logger = configure_logging()
+  logger = configure_logging(settings.log_name, settings.logging_kwargs)
+  app.state.logger = logger
   async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)
-  # Set application state
-  app.state.logger = logger
   yield
   await engine.dispose()
 
@@ -248,7 +222,7 @@ user_router = crud_router(
 app.include_router(user_router)
 
 
-@app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
+@app.get("/health", status_code=status.HTTP_204_NO_CONTENT, tags=["meta"])
 async def health() -> Response:
   """Health-check endpoint."""
   return Response(
