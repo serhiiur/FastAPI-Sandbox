@@ -23,7 +23,8 @@ APIs:
 - [FastAPI + Httpx (integration with 3rd-party API) CRUD API](httpx-api)
 - [FastAPI + AWS S3 (aiobotocore)](aws-s3-management-api)
 - [FastAPI + GraphQL(Graphene) CRUD API](graphql-graphene-crud-api)
-- [FastAPI + Websockets + Redis Streams](websockets-with-redis-streams/)
+- [FastAPI + Websockets + Redis Streams](websockets-with-redis-streams)
+- [FastAPI + SQLAlchemy + FastAPI Users](fastapi-users-auth-api)
 
 
 
