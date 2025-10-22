@@ -1,6 +1,7 @@
 from collections.abc import AsyncIterator  # noqa: I001
 
 import pytest
+from asgi_lifespan import LifespanManager
 from faker import Faker
 from fastapi import status
 from httpx import ASGITransport, AsyncClient, Response
@@ -18,16 +19,13 @@ from api import (
   app,
   get_session,
   settings,
+  configure_logging,
 )
 
 pytestmark = pytest.mark.anyio
 
 engine = create_async_engine(settings.test_database_url)
-async_session = async_sessionmaker(
-  engine,
-  class_=AsyncSession,
-  expire_on_commit=False,
-)
+async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 @pytest.fixture
@@ -61,10 +59,13 @@ async def override_get_session() -> AsyncIterator[AsyncSession]:
 @pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AsyncClient]:
   """Async HTTP client to test FastAPI endpoints."""
+  app.state.logger = configure_logging("test")
+  app.state.engine = engine
   app.dependency_overrides[get_session] = override_get_session
-  transport = ASGITransport(app)
-  async with AsyncClient(base_url="http://test", transport=transport) as ac:
-    yield ac
+  async with LifespanManager(app) as manager:
+    transport = ASGITransport(manager.app)
+    async with AsyncClient(base_url="http://test", transport=transport) as ac:
+      yield ac
 
 
 @pytest.fixture
