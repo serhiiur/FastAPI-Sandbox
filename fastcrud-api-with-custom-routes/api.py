@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 # Constants
 MIN_USER_NAME_LENGTH: Final[int] = 2
 MAX_USER_NAME_LENGTH: Final[int] = 255
-USER_ID_LENGTH: Final[int] = 36
 
 
 class FastAPIKwargs(TypedDict):
@@ -70,7 +69,7 @@ class Settings(BaseSettings):
   title: str = "Users Management App"
   description: str = "CRUD Application to Manage Users"
   version: str = "0.0.1"
-  debug: bool = False
+  debug: bool = True
 
   # Logging settings
   log_name: str = __name__
@@ -111,11 +110,7 @@ def get_settings() -> Settings:
 settings = get_settings()
 
 engine = create_async_engine(settings.database_url, echo=settings.debug)
-async_session = async_sessionmaker(
-  engine,
-  class_=AsyncSession,
-  expire_on_commit=False,
-)
+async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
 @lru_cache
@@ -133,8 +128,8 @@ class Base(SQLModel):
 
   id: str = Field(
     default_factory=lambda: str(uuid4()),
-    min_length=USER_ID_LENGTH,
-    max_length=USER_ID_LENGTH,
+    min_length=36,
+    max_length=36,
     primary_key=True,
   )
   created_at: datetime = Field(default_factory=func.now)
@@ -178,8 +173,8 @@ class UpdateUser(SQLModel):
   )
 
 
-class UserSelectFilters(BaseModel):
-  """Schema used to select users from the database using filters."""
+class Filters(BaseModel):
+  """Filters to be used when selecting data from the database."""
 
   limit: int = Field(
     default=10,
@@ -216,10 +211,9 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 async def db_not_found_error_handler(
   _: Request,
-  e: NoResultFound,
+  e: NoResultFound,  # noqa: ARG001
 ) -> JSONResponse:
   """Database. Not found error handler."""
-  logger.info("Database Not Found Error: %s", e)
   client_message = {"error": "User not found"}
   return JSONResponse(client_message, status.HTTP_404_NOT_FOUND)
 
@@ -239,7 +233,6 @@ async def validation_error_handler(
   e: RequestValidationError,
 ) -> JSONResponse:
   """Pydantic validation error handler."""
-  logger.warning("Data Validation Error: %s", e)
   client_message = {"error": e.errors()[0]["msg"]}
   return JSONResponse(client_message, status.HTTP_422_UNPROCESSABLE_ENTITY)
 
@@ -282,7 +275,7 @@ DbSession: TypeAlias = Annotated[AsyncSession, Depends(get_session)]
 UserID: TypeAlias = Annotated[UUID, AfterValidator(str)]
 
 
-@app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
+@app.get("/health", status_code=status.HTTP_204_NO_CONTENT, tags=["meta"])
 async def health() -> Response:
   """Health-check endpoint."""
   return Response(
@@ -301,7 +294,7 @@ async def get_user(user_id: UserID, db: DbSession) -> dict[str, Any]:
 
 @router.get("", response_model=Users)
 async def get_users(
-  filters: Annotated[UserSelectFilters, Depends()],
+  filters: Annotated[Filters, Depends()],
   db: DbSession,
 ) -> dict[str, list[dict[str, Any]] | int]:
   """Get info about users from the database."""
