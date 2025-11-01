@@ -19,8 +19,13 @@ from fastapi_users.authentication import (
   BearerTransport,
   JWTStrategy,
 )
-from fastapi_users.db import SQLAlchemyBaseUserTableUUID, SQLAlchemyUserDatabase
+from fastapi_users.db import (
+  BaseUserDatabase,
+  SQLAlchemyBaseUserTableUUID,
+  SQLAlchemyUserDatabase,
+)
 from fastapi_users.jwt import SecretType
+from fastapi_users.password import PasswordHelperProtocol
 from fastapi_users.schemas import BaseUser, BaseUserCreate, BaseUserUpdate
 from pydantic_settings import BaseSettings
 from sqlalchemy import DateTime, String
@@ -62,7 +67,7 @@ class Settings(BaseSettings):
   debug: bool = True
 
   # Logging settings
-  log_name: str = "api"
+  log_name: str = __name__
   log_level: int = logging.INFO
   log_format: str = "%(levelname)s - %(name)s - %(asctime)s - %(message)s"
   log_datefmt: str = "%Y-%m-%d %H:%M:%S"
@@ -138,6 +143,16 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, UUID]):
   reset_password_token_secret: SecretType = settings.secret_key
   verification_token_secret: SecretType = settings.secret_key
 
+  def __init__(
+    self,
+    user_db: BaseUserDatabase[User, UUID],
+    password_helper: PasswordHelperProtocol | None = None,
+    *,
+    logger: "Logger | None" = None,
+  ) -> None:
+    super().__init__(user_db, password_helper)
+    self.logger = logger or logging.getLogger(__name__)
+
   async def on_after_register(
     self,
     user: User,
@@ -147,7 +162,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, UUID]):
 
     Typically, you'll want to send a welcome email.
     """
-    print(f"User {user.id} has registered.")
+    self.logger.info("User %s has registered.", user.id)
 
   async def validate_password(
     self,
@@ -169,7 +184,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, UUID]):
     request: Request | None = None,
   ) -> None:
     """Perform logic after successful user update."""
-    print(f"User {user.id} has been updated with {update_dict}.")
+    self.logger.info("User %s has been updated with %s.", user.id, update_dict)
 
   async def on_after_login(
     self,
@@ -178,32 +193,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, UUID]):
     response: Response | None = None,
   ) -> None:
     """Perform logic after a successful user login."""
-    print(f"User {user.id} logged in.")
-
-  async def on_after_request_verify(
-    self,
-    user: User,
-    token: str,
-    request: Request | None = None,
-  ) -> None:
-    """Perform logic after successful verification request.
-
-    Typically, you'll want to send an email with the link (and the token)
-    that allows the user to verify their email.
-    """
-    print(f"Verification requested for user {user.id}. Verification token: {token}")
-
-  async def on_after_verify(
-    self,
-    user: User,
-    request: Request | None = None,
-  ) -> None:
-    """Perform logic after successful user verification.
-
-    This may be useful if you wish to send another email or store this information
-    in a data analytics or customer success platform.
-    """
-    print(f"User {user.id} has been verified")
+    self.logger.info("User %s logged in.", user.id)
 
   async def on_after_forgot_password(
     self,
@@ -216,7 +206,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, UUID]):
     Typically, you'll want to send an e-mail with the link (and the token)
     that allows the user to reset their password.
     """
-    print(f"User {user.id} has forgot the password. Reset token: {token}")
+    self.logger.info("User %s has forgot the password. Reset token: %s", user.id, token)
 
   async def on_after_reset_password(
     self,
@@ -229,15 +219,7 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, UUID]):
     that their password has been changed and that they should take action if they
     think they have been hacked.
     """
-    print(f"User {user.id} has reset the password.")
-
-  async def on_before_delete(
-    self,
-    user: User,
-    request: Request | None = None,
-  ) -> None:
-    """Perform logic before user delete."""
-    print(f"User {user.id} is going to be deleted")
+    self.logger.info("User %s has reset the password.", user.id)
 
   async def on_after_delete(
     self,
@@ -245,12 +227,17 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, UUID]):
     request: Request | None = None,
   ) -> None:
     """Perform logic after user delete."""
-    print(f"User {user.id} is successfully deleted")
+    self.logger.info("User %s is successfully deleted", user.id)
 
 
 async def get_jwt_strategy() -> JWTStrategy[User, UUID]:
   """Return instance of JWTStrategy class."""
-  return JWTStrategy(secret=settings.secret_key, lifetime_seconds=3600)
+  return JWTStrategy(settings.secret_key, lifetime_seconds=3600)
+
+
+async def get_logger(request: Request) -> "Logger":
+  """Return logger object, initialized in the lifespan function."""
+  return cast("Logger", request.state.logger)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -268,9 +255,10 @@ async def get_user_db(
 
 async def get_user_manager(
   user_db: Annotated[SQLAlchemyUserDatabase[User, UUID], Depends(get_user_db)],
+  logger: Annotated["Logger", Depends(get_logger)],
 ) -> AsyncIterator[UserManager]:
   """Yield instance of UserManager class for managing authentication of users."""
-  yield UserManager(user_db)
+  yield UserManager(user_db, logger=logger)
 
 
 async def unexpected_error_handler(
@@ -278,20 +266,29 @@ async def unexpected_error_handler(
   e: Exception,
 ) -> JSONResponse:
   """Error handler for all uncaught exceptions."""
-  logger = cast("Logger", request.app.state.logger)
+  logger = await get_logger(request)
   logger.critical("Internal Server Error: %s", e)
   client_message = {"error": "Service is temporarily unavailable"}
   return JSONResponse(client_message, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class AppState(TypedDict):
+  """Data structure to represent state of the main application."""
+
+  logger: "Logger"
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-  """Run database migrations and init application state."""
-  if not hasattr(app.state, "logger"):
-    app.state.logger = configure_logging(settings.log_name, settings.logging_kwargs)
+async def lifespan(app: FastAPI) -> AsyncIterator[AppState]:
+  """Run database migrations and define application state objects."""
+  logger = getattr(
+    app.state,
+    "logger",
+    configure_logging(settings.log_name, settings.logging_kwargs),
+  )
   async with engine.begin() as conn:
     await conn.run_sync(Base.metadata.create_all)
-  yield
+  yield AppState(logger=logger)
   await engine.dispose()
 
 
@@ -348,4 +345,4 @@ async def health() -> Response:
 @app.get("/greet")
 async def greet(user: Annotated[User, Depends(current_active_user)]) -> dict[str, str]:
   """Welcome the current authenticated user."""
-  return {"message": f"Hello {user.email}!"}
+  return {"message": f"Hi, {user.email}"}
