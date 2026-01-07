@@ -8,7 +8,7 @@ from aiobotocore.stub import AioStubber
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
 
-from api import app, get_s3_client
+from api import app, get_s3_client, settings
 
 if TYPE_CHECKING:
   from faker import Faker
@@ -39,7 +39,7 @@ async def client(s3_client: "S3Client") -> AsyncIterator[AsyncClient]:
   async def override_get_s3_client() -> "S3Client":
     return s3_client
 
-  # here we use a different logger specifically for testings
+  # a different logger specifically for testings
   app.state.logger = logging.getLogger(__name__)
   app.dependency_overrides[get_s3_client] = override_get_s3_client
   transport = ASGITransport(app)
@@ -65,6 +65,12 @@ async def test_health(client: AsyncClient) -> None:
   resp = await client.get("/health")
   assert resp.status_code == status.HTTP_204_NO_CONTENT
   assert resp.headers["x-status"] == "health"
+
+
+async def test_version(client: AsyncClient) -> None:
+  resp = await client.get("/version")
+  assert resp.status_code == status.HTTP_200_OK
+  assert resp.json().get("version") == settings.version
 
 
 async def test_s3_list_objects(
