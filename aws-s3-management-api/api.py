@@ -171,6 +171,90 @@ class EmptyBucketError(Exception):
     self.message = message
 
 
+class VersionInfo(BaseModel):
+  """Schema to represent version info of the API."""
+
+  version: str = Field(description="Version of the API", examples=["0.0.1"])
+
+
+class S3BucketName(BaseModel):
+  """Schema to specify name of S3 bucket."""
+
+  name: str = Field(
+    alias="bucket",
+    description="Name of S3 bucket",
+    examples=["my-bucket-cace19b497e8"],
+  )
+
+
+class S3ObjectInfo(BaseModel):
+  """Schema to specify info about object in S3 bucket.
+
+  NOTE: we wrap Query into Field because without it
+        some extra params such as title, description,
+        example, etc. aren't displayed in the OpenAPI
+        schema.
+
+        See: https://github.com/fastapi/fastapi/issues/4700
+
+  NOTE: when using a Pydantic model for POST-based routes, then
+        Query argument can be ignored and an example of field can
+        be declared within a pydantic's Field method like this:
+        Field(examples=['test']) instead of Field(Query(examples=['test']))
+  """
+
+  bucket: str = Field(
+    serialization_alias="Bucket",
+    description="Name of S3 bucket",
+    examples=["my-bucket-cace19b497e8"],
+  )
+  object: str = Field(
+    Query(
+      description="Name of object in S3 bucket",
+      examples=["hehe.png"],
+    ),
+    serialization_alias="Key",
+  )
+  version: str | None = Field(
+    Query(
+      None,
+      description="Version of object in S3 bucket",
+      examples=["9fda9ee0-58fd-44f9-8816-d90e377079c0"],
+    ),
+    serialization_alias="VersionId",
+  )
+  model_config = ConfigDict(populate_by_name=True)
+
+
+class AWSResponseListObjects(BaseModel):
+  """Schema to represent info about objects in S3 bucket."""
+
+  bucket: str = Field(
+    description="Name of S3 bucket",
+    examples=["my-bucket-cace19b497e8"],
+  )
+  objects: list[str] = Field(default_factory=list)
+  count: int = 0
+
+  @model_validator(mode="after")
+  def count_objects(self) -> Self:
+    """Set self.count attribute based on length of self.objects attribute."""
+    self.count = len(self.objects)
+    return self
+
+
+class S3ObjectURL(BaseModel):
+  """Schema to represent a URL of the object in S3 bucket."""
+
+  url: str = Field(description="URL to S3 object")
+
+
+class Status(BaseModel):
+  """Schema to specify status of the operation."""
+
+  status: Literal["created", "uploaded"]
+
+
 async def bucket_empty_error_handler(_: Request, e: EmptyBucketError) -> JSONResponse:
   """Handle s3 bucket empty error."""
   client_message = {"error": e.message}
@@ -242,91 +326,7 @@ app = FastAPI(
 )
 app.add_middleware(MaxUploadFileSizeMiddleware)
 
-# Query param to specify name of S3 bucket
-BucketQueryParam = Query(
-  description="Name of S3 bucket",
-  examples=["my-bucket-cace19b497e8"],
-)
 
-
-class VersionInfo(BaseModel):
-  """Schema to represent version info of the API."""
-
-  version: str = Field(description="Version of the API", examples=["0.0.1"])
-
-
-class S3BucketName(BaseModel):
-  """Schema to specify name of S3 bucket."""
-
-  name: str = Field(
-    alias="bucket",
-    description="Name of S3 bucket",
-    examples=["my-bucket-cace19b497e8"],
-  )
-
-
-class S3ObjectInfo(BaseModel):
-  """Schema to specify info about object in S3 bucket.
-
-  NOTE: we wrap Query into Field because without it
-        some extra params such as title, description,
-        example, etc. aren't displayed in the OpenAPI
-        schema.
-
-        See: https://github.com/fastapi/fastapi/issues/4700
-
-  NOTE: when using a Pydantic model for POST-based routes, then
-        Query argument can be ignored and an example of field can
-        be declared within a pydantic's Field method like this:
-        Field(examples=['test']) instead of Field(Query(examples=['test']))
-  """
-
-  bucket: str = Field(BucketQueryParam, serialization_alias="Bucket")
-  object: str = Field(
-    Query(
-      description="Name of object in S3 bucket",
-      examples=["hehe.png"],
-    ),
-    serialization_alias="Key",
-  )
-  version: str | None = Field(
-    Query(
-      None,
-      description="Version of object in S3 bucket",
-      examples=["9fda9ee0-58fd-44f9-8816-d90e377079c0"],
-    ),
-    serialization_alias="VersionId",
-  )
-  model_config = ConfigDict(populate_by_name=True)
-
-
-class AWSResponseListObjects(BaseModel):
-  """Schema to represent info about objects in S3 bucket."""
-
-  bucket: str = Field(BucketQueryParam)
-  objects: list[str] = Field(default_factory=list)
-  count: int = 0
-
-  @model_validator(mode="after")
-  def count_objects(self) -> Self:
-    """Set self.count attribute based on length of self.objects attribute."""
-    self.count = len(self.objects)
-    return self
-
-
-class S3ObjectURL(BaseModel):
-  """Schema to represent a URL of the object in S3 bucket."""
-
-  url: str = Field(description="URL to S3 object")
-
-
-class Status(BaseModel):
-  """Schema to specify status of the operation."""
-
-  status: Literal["created", "uploaded"]
-
-
-# Reused S3-client annotation with dependency
 S3_Client: TypeAlias = Annotated["S3Client", Depends(get_s3_client)]
 S3_Object: TypeAlias = Annotated[S3ObjectInfo, Depends()]
 
@@ -406,7 +406,7 @@ async def list_objects(bucket: str, s3_client: S3_Client) -> AWSResponseListObje
   """List of objects in S3 bucket.
 
   NOTE: only first 1000 objects of the bucket are returned.
-  To return all objects you need to pagination.
+        To return all objects you need to use pagination.
   """
   objects = await s3_client.list_objects_v2(Bucket=bucket)
   if "Contents" not in objects:
@@ -425,8 +425,7 @@ async def list_objects(bucket: str, s3_client: S3_Client) -> AWSResponseListObje
 async def delete_object(s3_client: S3_Client, s3_object: S3_Object) -> None:
   """Delete object in S3 bucket.
 
-  NOTE: if there's no such object in the bucket,
-  204 response will be returned anyway.
+  NOTE: if there's no such object in the bucket, 204 response will be returned anyway.
   """
   await s3_client.delete_object(
     **s3_object.model_dump(by_alias=True, exclude_none=True)
