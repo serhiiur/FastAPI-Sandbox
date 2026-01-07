@@ -1,10 +1,12 @@
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from functools import lru_cache
+from pathlib import Path
 from typing import (
   TYPE_CHECKING,
   Annotated,
+  Any,
   Literal,
   Self,
   TypeAlias,
@@ -64,16 +66,19 @@ class AWSClientKwargs(TypedDict):
 class Settings(BaseSettings):
   """API settings."""
 
-  model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+  model_config = SettingsConfigDict(
+    env_file=Path(__file__).parent / ".env",
+    env_file_encoding="utf-8",
+  )
 
   # FastAPI settings
   title: str = "AWS S3 Management API"
   description: str = "API to manage AWS S3 buckets and objects"
   version: str = "0.0.1"
-  debug: bool = True
+  debug: bool = False
 
   # Logging settings
-  log_name: str = __name__
+  log_name: str = "api"
   log_level: int = logging.INFO
   log_format: str = "%(levelname)s - %(name)s - %(asctime)s - %(message)s"
   log_datefmt: str = "%Y-%m-%d %H:%M:%S"
@@ -82,7 +87,7 @@ class Settings(BaseSettings):
   aws_access_key_id: str = ""
   aws_secret_access_key: str = ""
 
-  # Files settings
+  # Files upload settings
   max_file_upload_size: int = 1_000_000  # 1MB
 
   @property
@@ -122,10 +127,11 @@ def get_settings() -> Settings:
 settings = get_settings()
 
 
-def configure_logging() -> "Logger":
+def configure_logging(name: str, options: "LoggingKwargs | None" = None) -> "Logger":
   """Configure app logging and return logger object."""
-  logging.basicConfig(**settings.logging_kwargs)
-  return logging.getLogger(settings.log_name)
+  if options is not None:
+    logging.basicConfig(**options)
+  return logging.getLogger(name)
 
 
 class MaxUploadFileSizeMiddleware(BaseHTTPMiddleware):
@@ -136,10 +142,11 @@ class MaxUploadFileSizeMiddleware(BaseHTTPMiddleware):
     request: Request,
     call_next: "RequestResponseEndpoint",
   ) -> Response:
-    """Validate value of the content-length header.
+    """Check size of the uploaded file by validating Content-Length header.
 
-    Return HTTP 411 status if length of the content is not set.
-    Return HTTP 413 if length exceeds the limit.
+    :param request: Request object
+    :param call_next: Response object
+    :return: 411/413 response if validation fails, otherwise proceed to next middleware
     """
     if request.method == "POST":
       content_length = request.headers.get("content-length")
@@ -159,29 +166,21 @@ class EmptyBucketError(Exception):
 
   __slots__ = ("message",)
 
-  default_message: str = "S3 bucket is empty"
-
-  def __init__(self, message: str | None = None) -> None:
+  def __init__(self, message: str = "S3 bucket is empty") -> None:
     """Set error message."""
-    self.message = message or self.default_message
+    self.message = message
 
 
-async def bucket_empty_error_handler(
-  _: Request,
-  e: EmptyBucketError,
-) -> JSONResponse:
+async def bucket_empty_error_handler(_: Request, e: EmptyBucketError) -> JSONResponse:
   """Handle s3 bucket empty error."""
   client_message = {"error": e.message}
   return JSONResponse(client_message, status.HTTP_400_BAD_REQUEST)
 
 
-async def aws_client_error_handler(
-  request: Request,
-  e: ClientError,
-) -> JSONResponse:
+async def aws_client_error_handler(request: Request, e: ClientError) -> JSONResponse:
   """AWS client error handler."""
-  logger = cast("Logger", request.app.state.logger)
   error = f"Client Error: {e}"
+  logger = await get_logger(request)
   logger.error(error)
   status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
   # No such bucket error handling
@@ -191,29 +190,55 @@ async def aws_client_error_handler(
   return JSONResponse(error, status_code)
 
 
+# error handlers mapping to be registered in the main FastAPI app
+error_handlers: dict[
+  int | type[Exception],
+  Callable[[Request, Any], Coroutine[Any, Any, Response]],
+] = {
+  ClientError: aws_client_error_handler,
+  EmptyBucketError: bucket_empty_error_handler,
+}
+
+
+class AppState(TypedDict):
+  """Data structure to represent state of the main FastAPI app."""
+
+  logger: "Logger"
+  s3_client: "S3Client"
+
+
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-  """Define the client to interact with AWS S3."""
-  logger = configure_logging()
-  app.state.logger = logger
+async def lifespan(app: FastAPI) -> AsyncIterator[AppState]:
+  """Define the client to interact with AWS S3.
+
+  NOTE: logger object can be redefined during testing, by adding it
+        to the app.state, like app.state.logger = ...
+        Otherwise, default logger will be created via configure_logging function.
+  """
+  logger = getattr(
+    app.state,
+    "logger",
+    configure_logging(settings.log_name, options=settings.logging_kwargs),
+  )
   s3_session = get_session()
   async with s3_session.create_client("s3", **settings.aws_s3_kwargs) as s3_client:
-    app.state.s3_client = s3_client
-    yield
+    yield AppState(s3_client=s3_client, logger=logger)
 
 
 async def get_s3_client(request: Request) -> "S3Client":
   """Return the client to interact with S3 declared in the app's lifespan."""
-  return request.app.state.s3_client
+  return cast("S3Client", request.state.s3_client)
+
+
+async def get_logger(request: Request) -> "Logger":
+  """Return logger declared in the app's lifespan."""
+  return cast("Logger", request.state.logger)
 
 
 app = FastAPI(
   **settings.fastapi_kwargs,
   lifespan=lifespan,
-  exception_handlers={
-    ClientError: aws_client_error_handler,
-    EmptyBucketError: bucket_empty_error_handler,
-  },
+  exception_handlers={**error_handlers},
 )
 app.add_middleware(MaxUploadFileSizeMiddleware)
 
@@ -222,6 +247,12 @@ BucketQueryParam = Query(
   description="Name of S3 bucket",
   examples=["my-bucket-cace19b497e8"],
 )
+
+
+class VersionInfo(BaseModel):
+  """Schema to represent version info of the API."""
+
+  version: str = Field(description="Version of the API", examples=["0.0.1"])
 
 
 class S3BucketName(BaseModel):
@@ -241,6 +272,7 @@ class S3ObjectInfo(BaseModel):
         some extra params such as title, description,
         example, etc. aren't displayed in the OpenAPI
         schema.
+
         See: https://github.com/fastapi/fastapi/issues/4700
 
   NOTE: when using a Pydantic model for POST-based routes, then
@@ -301,11 +333,17 @@ S3_Object: TypeAlias = Annotated[S3ObjectInfo, Depends()]
 
 @app.get("/health", status_code=status.HTTP_204_NO_CONTENT)
 async def health() -> Response:
-  """Health-check endpoint."""
+  """Return health status of the API."""
   return Response(
     status_code=status.HTTP_204_NO_CONTENT,
     headers={"x-status": "health"},
   )
+
+
+@app.get("/version")
+async def version() -> VersionInfo:
+  """Return version of the API."""
+  return VersionInfo(version=settings.version)
 
 
 @app.post(
@@ -320,7 +358,8 @@ async def create_bucket(bucket: S3BucketName, s3_client: S3_Client) -> Status:
         specified bucket already exists in the default location.
         Once a LocationConstraint is set, the corresponding exception
         will be thrown.
-        See: https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3/client/create_bucket.html#create-bucket
+
+        See: https://is.gd/H67mMr
   """
   await s3_client.create_bucket(Bucket=bucket.name)
   return Status(status="created")
@@ -383,10 +422,7 @@ async def list_objects(bucket: str, s3_client: S3_Client) -> AWSResponseListObje
   tags=["s3 object"],
   status_code=status.HTTP_204_NO_CONTENT,
 )
-async def delete_object(
-  s3_client: S3_Client,
-  s3_object: S3_Object,
-) -> None:
+async def delete_object(s3_client: S3_Client, s3_object: S3_Object) -> None:
   """Delete object in S3 bucket.
 
   NOTE: if there's no such object in the bucket,
@@ -411,10 +447,7 @@ async def delete_object(
     }
   },
 )
-async def download_object(
-  s3_client: S3_Client,
-  s3_object: S3_Object,
-) -> Response:
+async def download_object(s3_client: S3_Client, s3_object: S3_Object) -> Response:
   """Generate download link to object from S3 bucket."""
   resp = await s3_client.get_object(
     **s3_object.model_dump(by_alias=True, exclude_none=True)
@@ -432,10 +465,7 @@ async def download_object(
 
 
 @app.get("/bucket/objects/presign-url", tags=["s3 object"])
-async def presign_object_url(
-  s3_client: S3_Client,
-  s3_object: S3_Object,
-) -> S3ObjectURL:
+async def presign_object_url(s3_client: S3_Client, s3_object: S3_Object) -> S3ObjectURL:
   """Generate presigned URL for object in S3 bucket."""
   presigned_url = await s3_client.generate_presigned_url(
     "get_object",
