@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aiobotocore.session import get_session
 from aiobotocore.stub import AioStubber
+from asgi_lifespan import LifespanManager
 from fastapi import status
 from httpx import ASGITransport, AsyncClient
 
@@ -39,12 +40,14 @@ async def client(s3_client: "S3Client") -> AsyncIterator[AsyncClient]:
   async def override_get_s3_client() -> "S3Client":
     return s3_client
 
-  # a different logger specifically for testings
+  # override logger specifically for testing
   app.state.logger = logging.getLogger(__name__)
   app.dependency_overrides[get_s3_client] = override_get_s3_client
-  transport = ASGITransport(app)
-  async with AsyncClient(base_url="http://test", transport=transport) as ac:
-    yield ac
+  async with LifespanManager(app) as manager:
+    transport = ASGITransport(manager.app)
+    base_url = "http://test"
+    async with AsyncClient(base_url=base_url, transport=transport) as http_client:
+      yield http_client
 
 
 @pytest.fixture
