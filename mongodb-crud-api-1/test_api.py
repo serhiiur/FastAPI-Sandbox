@@ -2,7 +2,6 @@ from collections.abc import AsyncIterator  # noqa: I001
 from datetime import UTC, datetime
 from secrets import token_hex
 from typing import TYPE_CHECKING, Any
-from collections.abc import Mapping
 
 import pytest
 from asgi_lifespan import LifespanManager
@@ -15,7 +14,6 @@ from api import Movie, MovieAwards, MovieImdb, UpdateMovie, app, settings
 if TYPE_CHECKING:
   from faker import Faker
   from motor.motor_asyncio import AsyncIOMotorClient
-  from pymongo.asynchronous.database import AsyncDatabase
 
 
 pytestmark = pytest.mark.anyio
@@ -45,7 +43,7 @@ def movie(faker: "Faker") -> Movie:
     num_mflix_comments=faker.random_number(),
     awards=movie_awards,
     lastupdated=str(faker.date_time()),
-    year=faker.year(),
+    year=int(faker.year()),
     imdb=movie_imdb,
     countries=[faker.country(), faker.country()],
     directors=[faker.name()],
@@ -53,18 +51,11 @@ def movie(faker: "Faker") -> Movie:
   )
 
 
-mongo: "AsyncIOMotorClient[Any]" = AsyncMongoMockClient()
-db: "AsyncDatabase[Mapping[str, Any]]" = getattr(mongo, settings.test_db_name)
-
-
 @pytest.fixture(scope="session")
 async def client() -> AsyncIterator[AsyncClient]:
-  """Lifespan manager is required here in order to trigger async
-  'beanie.init_beanie' function in the lifespan of the app.
-
-  It will not work without it.
-  See Warning in https://fastapi.tiangolo.com/advanced/async-tests/#other-asynchronous-function-calls
-  """  # noqa: D205
+  """Fixture to provide a test client with a mock database."""
+  mongo: AsyncIOMotorClient[Any] = AsyncMongoMockClient()
+  db = getattr(mongo, settings.test_db_name)
   app.state.db = db
   async with LifespanManager(app) as manager:
     transport = ASGITransport(manager.app)
