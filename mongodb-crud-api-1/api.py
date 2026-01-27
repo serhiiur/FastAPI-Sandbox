@@ -5,17 +5,10 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated, Any, Self, TypedDict
 
 from beanie import Document, PydanticObjectId, SortDirection, init_beanie
-from fastapi import (
-  APIRouter,
-  Depends,
-  FastAPI,
-  Query,
-  Request,
-  status,
-)
+from fastapi import APIRouter, Depends, FastAPI, Query, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 from pymongo.asynchronous.mongo_client import AsyncMongoClient
 
 if TYPE_CHECKING:
@@ -35,16 +28,14 @@ class FastAPIKwargs(TypedDict):
 class Settings(BaseSettings):
   """API settings."""
 
-  model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
-
   # FastAPI settings
   title: str = "Movies Management API"
   description: str = "CRUD API to manage movies in MongoDB"
   version: str = "0.0.1"
-  debug: bool = True
+  debug: bool = False
 
   # MongoDB settings
-  mongodb_url: str = ""
+  mongodb_url: str = "mongodb://username:password@mongo:27017"
   db_name: str = "sample_mflix"
   collection_name: str = "movies"
   test_db_name: str = "test_sample_mflix"
@@ -74,11 +65,9 @@ class MovieNotFound(Exception):  # noqa: N818
 
   __slots__ = ("message",)
 
-  default_message: str = "Movie not found"
-
-  def __init__(self, message: str | None = None) -> None:
+  def __init__(self, message: str = "Movie not found") -> None:
     """Set error message."""
-    self.message = message or self.default_message
+    self.message = message
 
 
 class NothingToUpdate(Exception):  # noqa: N818
@@ -86,11 +75,9 @@ class NothingToUpdate(Exception):  # noqa: N818
 
   __slots__ = ("message",)
 
-  default_message: str = "Nothing to update"
-
-  def __init__(self, message: str | None = None) -> None:
+  def __init__(self, message: str = "Nothing to update") -> None:
     """Set error message."""
-    self.message = message or self.default_message
+    self.message = message
 
 
 class MovieAwards(BaseModel):
@@ -294,10 +281,7 @@ async def create_movie(movie: Movie) -> Movie:
 
 
 @router.patch("/{movie_id}")
-async def update_movie(
-  movie_id: PydanticObjectId,
-  movie_info: UpdateMovie,
-) -> Movie:
+async def update_movie(movie_id: PydanticObjectId, movie_info: UpdateMovie) -> Movie:
   """Update a movie."""
   updated_movie_info = movie_info.model_dump(exclude_none=True)
   if not updated_movie_info:
