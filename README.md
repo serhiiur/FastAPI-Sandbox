@@ -65,6 +65,11 @@ APIs:
 
 * *uvloop* is used to replace the event loop in the standard library `asyncio`. It is implemented with *Cython* and is very fast, which can increase the speed of asyncio by 2–4 times.
 
+* Generate basic FastAPI project via **uvx**:
+```bash
+uvx fastapi-new awesomeapp
+```
+
 
 
 ## References
