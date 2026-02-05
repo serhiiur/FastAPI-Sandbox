@@ -5,7 +5,7 @@ Another collection of snippets and implementations for FastAPI.
 ## Navigation
 
 Snippets:
-- [Upload files synchronously and asynchronously](file-upload)
+- [Upload files synchronously and asynchronously](sync-and-async-file-upload)
 - [Running synchronous functions in async endpoints](threadpool-executor)
 - [API with protected routes](protected-routes)
 - [Monitor active threads when using synchronous dependencies](monitor-active-threads)
@@ -18,7 +18,7 @@ APIs:
 - [FastCRUD + SQLModel + SQLAdmin](fastcrud-sqlalchemy-api)
 - [FastAPI + Tortoise ORM](tortoise-orm-crud-api)
 - [FastAPI + Redis OM CRUD API](redis-om-crud-api)
-- [FastAPI + Beanie(MongoDB) CRUD API](mongodb-crud-api-1)
+- [Dockerized FastAPI application that uses Beanie library for managing a MongoDB database](mongodb-crud-api-1)
 - [FastAPI + Motor(MongoDB) CRUD API](mongodb-crud-api-2)
 - [FastAPI + Httpx (integration with 3rd-party API) CRUD API](httpx-api)
 - [FastAPI + AWS S3 (aiobotocore)](aws-s3-management-api)
