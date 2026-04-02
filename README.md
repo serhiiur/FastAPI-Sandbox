@@ -13,10 +13,10 @@ Code examples in this project have been developed and tested on Python >=3.12,<3
 ## Project Navigation
 
 Snippets:
-- [Upload files synchronously and asynchronously](sync-and-async-file-upload/)
-- [Running synchronous functions in async endpoints](threadpool-executor/)
-- [API with protected routes](protected-routes/)
-- [Monitor active threads when using synchronous dependencies](monitor-active-threads/)
+- [Upload files synchronously and asynchronously](snippets/sync-and-async-file-upload/)
+- [Running synchronous functions in async endpoints](snippets/threadpool-executor/)
+- [API with protected routes](snippets/protected-routes/)
+- [Monitor active threads when using synchronous dependencies](snippets/monitor-active-threads/)
 
 APIs:
 - [FastCRUD + SQLAlchemy](fastcrud-sqlalchemy-api/)
