@@ -5,7 +5,9 @@ Advanced notes and examples on using FastAPI.
 
 ## Prerequisites
 
-Code examples in this project have been developed and tested on Python >=3.12,<3.13. Also you may require Docker for running additional services such as Redis, PostgreSQL, MongoDB etc.
+Code examples in this project have been developed and tested on Python >=3.12,<3.13. You may also need Docker for running additional services such as Redis, PostgreSQL, MongoDB etc.
+
+**Note**: you may find some examples in this repository pointless and it's totally fine. The goal is to emphasize the integration and usage steps of different components in a FastAPI-based project. 
 
 
 ## Project Navigation
