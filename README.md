@@ -34,6 +34,7 @@ APIs:
 - [FastAPI + SQLAlchemy + FastAPI Users](fastapi-users-auth-api/)
 - [Basic JWT Authentication API](jwt-authentication-api/)
 - [FastAPI + Streaming LLM Chat response](stream-llm-response/)
+- [Deploy FastAPI application to AWS Lambda + API Gateway](fastapi-aws-lambda-api/)
 
 
 ## FastAPI Notes
