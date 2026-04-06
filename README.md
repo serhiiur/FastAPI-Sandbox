@@ -15,7 +15,6 @@ Code examples in this project have been developed and tested on Python >=3.12,<3
 Snippets:
 - [Sync and Async file upload](sync-and-async-file-upload/)
 - [Running blocking functions in async endpoints](threadpool-executor/)
-- [Protect API endpoint](protected-routes/)
 - [Monitor active threads when using sync dependencies](monitor-active-threads/)
 
 APIs:
@@ -33,7 +32,8 @@ APIs:
 - [FastAPI + GraphQL(Graphene) CRUD API](graphql-graphene-crud-api/)
 - [FastAPI + Websockets + Redis Streams](websockets-with-redis-streams/)
 - [FastAPI + SQLAlchemy + FastAPI Users](fastapi-users-auth-api/)
-
+- [Basic JWT Authentication API](jwt-authentication-api/)
+- [FastAPI + Streaming LLM Chat response](stream-llm-response/)
 
 
 ## FastAPI Notes
