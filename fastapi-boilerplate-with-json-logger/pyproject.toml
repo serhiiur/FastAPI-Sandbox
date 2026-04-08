@@ -1,0 +1,23 @@
+[project]
+name = "fastapi-boilerplate-api"
+description = "Starter FastAPI application."
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "fastapi[standard]>=0.135.3",
+  "pydantic-settings>=2.13.1",
+  "python-json-logger>=4.1.0",
+]
+
+[dependency-groups]
+lint = ["ruff>=0.15.9", "ty>=0.0.29"]
+test = ["asgi-lifespan>=2.1.0", "faker>=40.13.0", "pytest>=9.0.2"]
+
+[tool.pytest.ini_options]
+addopts = """
+  --durations=10
+  --durations-min=0.1
+  --verbose
+  --maxfail=1
+"""
+filterwarnings = ["ignore::DeprecationWarning"]
