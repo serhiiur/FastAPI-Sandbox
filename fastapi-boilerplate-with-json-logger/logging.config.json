@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "json": {
+      "()": "pythonjsonlogger.json.JsonFormatter",
+      "format": "%(levelname)s %(asctime)s %(name)s %(message)s %(pathname)s %(lineno)d",
+      "datefmt": "%Y-%m-%d %H:%M:%S"
+    }
+  },
+  "handlers": {
+    "console": {
+      "class": "logging.StreamHandler",
+      "formatter": "json",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  "loggers": {
+    "uvicorn.error": {
+      "handlers": [
+        "console"
+      ],
+      "level": "WARNING",
+      "propagate": false
+    },
+    "uvicorn.access": {
+      "handlers": [
+        "console"
+      ],
+      "level": "INFO",
+      "propagate": true
+    }
+  }
+}
