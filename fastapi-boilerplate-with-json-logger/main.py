@@ -9,7 +9,6 @@ from fastapi import APIRouter, Depends, FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from uvicorn.config import LoopFactoryType
 
 
 class FastApiKwargs(TypedDict):
@@ -24,22 +23,13 @@ class FastApiKwargs(TypedDict):
   openapi_url: str
 
 
-class UvicornKwargs(TypedDict):
-  """Data structure to specify kwargs for Uvicorn."""
-
-  log_level: int
-  log_config: dict[str, Any]
-  loop: LoopFactoryType
-  reload: bool
-
-
 class Settings(BaseSettings):
   """Application settings."""
 
   model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
   # FastAPI settings
-  title: str = "Boilerplate API"
+  title: str = "FastAPI Template"
   description: str = "Starter FastAPI application."
   debug: bool = False
   version: str = "0.0.1"
@@ -47,14 +37,8 @@ class Settings(BaseSettings):
   redoc_url: str = "/api/schema/redoc"
   openapi_url: str = "/api/schema/openapi.json"
 
-  # Logging settings
-  log_format: str = (
-    "%(levelname)s %(asctime)s %(name)s %(message)s %(pathname)s %(lineno)d"
-  )
-  log_datefmt: str = "%Y-%m-%d %H:%M:%S"
-
-  # Uvicorn settings
-  uvicorn_loop: LoopFactoryType = "uvloop"
+  # Other settings
+  logger_name: str = "uvicorn.error"
 
   @property
   def fastapi_kwargs(self) -> FastApiKwargs:
@@ -67,46 +51,6 @@ class Settings(BaseSettings):
       docs_url=self.docs_url,
       redoc_url=self.redoc_url,
       openapi_url=self.openapi_url,
-    )
-
-  @property
-  def uvicorn_kwargs(self) -> UvicornKwargs:
-    """Kwargs for Uvicorn"""
-    log_config: dict[str, Any] = {
-      "version": 1,
-      "disable_existing_loggers": False,
-      "formatters": {
-        "json": {
-          "()": "pythonjsonlogger.json.JsonFormatter",
-          "format": self.log_format,
-          "datefmt": self.log_datefmt,
-        }
-      },
-      "handlers": {
-        "default": {
-          "class": "logging.StreamHandler",
-          "formatter": "json",
-          "stream": "ext://sys.stdout",
-        }
-      },
-      "loggers": {
-        "uvicorn.error": {
-          "handlers": ["default"],
-          "level": logging.WARNING,
-          "propagate": False,
-        },
-        "uvicorn.access": {
-          "handlers": ["default"],
-          "level": logging.INFO,
-          "propagate": False,
-        },
-      },
-    }
-    return UvicornKwargs(
-      log_level=logging.INFO if self.debug else logging.WARNING,
-      log_config=log_config,
-      loop=self.uvicorn_loop,
-      reload=self.debug,
     )
 
 
@@ -128,22 +72,26 @@ async def get_logger(request: Request) -> logging.Logger:
 Logger: TypeAlias = Annotated["logging.Logger", Depends(get_logger)]
 
 
+class InternalServerError(BaseModel):
+  """Response schema to specify an internal server error for the client."""
+
+  detail: str = "service is temporarily unavailable"
+  path: str
+  timestamp: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
 async def internal_server_error_handler(
   request: Request,
   _exc: Exception,
 ) -> JSONResponse:
-  """Error handler for all uncaught exceptions."""
+  """Error handler for all unhandled errors."""
   return JSONResponse(
-    content={
-      "detail": "service is temporarily unavailable",
-      "path": request.url.path,
-      "timestamp": datetime.now(UTC).isoformat(),
-    },
+    content=InternalServerError(path=request.url.path).model_dump(),
     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
   )
 
 
-# eError handlers mapping to be registered in the main FastAPI app
+# error handlers mapping to be registered in the main FastAPI app
 error_handlers: dict[
   int | type[Exception],
   Callable[[Request, Any], Coroutine[Any, Any, Response]],
@@ -181,11 +129,7 @@ class AppState(TypedDict):
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[AppState]:
   """Run database migrations and define application state objects."""
-  logger = getattr(
-    app.state,
-    "logger",
-    logging.getLogger("uvicorn.error"),
-  )
+  logger = getattr(app.state, "logger", logging.getLogger(settings.logger_name))
   yield AppState(logger=logger)
 
 
@@ -211,9 +155,3 @@ async def health() -> ApiHealth:
 
 
 app.include_router(internal_router)
-
-
-if __name__ == "__main__":
-  import uvicorn
-
-  uvicorn.run("main:app", **settings.uvicorn_kwargs)
