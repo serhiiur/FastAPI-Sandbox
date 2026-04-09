@@ -35,7 +35,7 @@ APIs:
 - [Basic JWT Authentication API](jwt-authentication-api/)
 - [FastAPI + Streaming LLM Chat response](stream-llm-response/)
 - [Deploy FastAPI application to AWS Lambda + API Gateway](fastapi-aws-lambda-api/)
-- [FastAPI Boilerplate API with JSON Logger](fastapi-boilerplate-with-json-logger/)
+- [FastAPI Boilerplate Application](fastapi-boilerplate/)
 
 
 ## FastAPI Notes
