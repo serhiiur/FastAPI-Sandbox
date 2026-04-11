@@ -6,6 +6,7 @@ A minimal, production-ready FastAPI boilerplate designed as a starting point for
 ## Features
 
 - **Python** (*>=3.12,<3.13*)
+- **Docker + Docker Compose** setup
 - **[UV](https://docs.astral.sh/uv/)** - package and project manager
 - **[Ruff](https://docs.astral.sh/ruff/)** - linter and code formatter
 - **[Ty](https://github.com/astral-sh/ty)** - type checker
@@ -18,7 +19,9 @@ A minimal, production-ready FastAPI boilerplate designed as a starting point for
 
 - All settings are read from the environment variables or <ins>.env</ins> file (see [.env.example](.env.example)). Copy it to <ins>.env</ins> before running the application.
 
-- Logging configuration is defined in a [separate file](logging.config.json), then passed to the `uvicorn` command when running the application.
+- Configure **Uvicorn** via environment variables, set in <ins>.env</ins> file. It makes sense when running in Docker using [docker compose](docker-compose.yml). [.env.example](.env.example) file provides some configuration for Uvicorn.
+
+- Logging config is defined in a [logging.config.json](logging.config.json). It gets passed to the `uvicorn` command when running the application.
 
 - Logger object is tied to the application state. There is a [dependency](main.py#L66) to get the logger object. The logger object is [overridden](test_main.py#L15) during testing. Usage example:
 ```python
@@ -28,47 +31,39 @@ async def test(logger: Logger) -> dict[str, str]:
   return {"response": "ok"}
 ```
 
-- There is an [error handler](main.py#L83) to intercept al unhandled error and return a custom response to the client, providing information about the error.
+- There is an [error handler](main.py#L83) to intercept all unhandled errors and return a custom response to the client, providing information about the error.
 
-- There are 2 internal routes to specify [health](main.py#L151) and [version](main.py#L145) of the API. They use a separate `APIRouter` which is included in the main FastAPI application.
+- There are 2 internal routes to specify [healthcheck](main.py#L151) and [version](main.py#L145) of the API. They use a separate `APIRouter` which is included in the main FastAPI application.
 
-- By default Swagger UI is available at `/api/schema/docs`, ReDoc at `/api/schema/redoc`, and the raw OpenAPI schema at `/api/schema/openapi.json`. It can be easily changed in your <ins>.env</ins> configuration file.
+- By default Swagger UI is available at [/api/schema/docs](http://localhost:8000/api/schema/docs), ReDoc at [/api/schema/redoc](http://localhost:8000/api/schema/redoc), and the raw OpenAPI schema at [/api/schema/openapi.json](http://localhost:8000/api/schema/openapi.json). It can be changed in your <ins>.env</ins> configuration file.
 
 
 ## Running
 
-Before running the application make sure to install project dependencies with uv:
+There are 2 ways to run the FastAPI application. Make sure to configure your <ins>.env</ins> file beforehand.
+
+### Running Locally
+
 ```bash
+# install project dependencies
 uv sync --all-groups
+
+# run the application
+uv run uvicorn main:app --log-config logging.config.json
 ```
 
-and adjust the <ins>.env</ins> file to your environment.
+### Running via Docker Compose
 
-Finally run the application:
 ```bash
-uv run uvicorn main:app --log-config logging.config.json
+docker compose up --build
 ```
 
 The API is now available at [http://localhost:8000](http://localhost:8000).
 
 Navigate to [/api/schema/docs](http://localhost:8000/api/schema/docs) (or the path you set in your <ins>.env</ins> file) to get access to Swagger UI.
-s
-
-### Tune up Uvicorn
-You can pass additional parameters to the `uvicorn` command to tune up the server and increase its performance. For example:
-```bash
-uv run uvicorn main:app \
---log-config logging.config.json \
---log-level warning \
---loop uvloop \
---http httptools \
---workers $((2*$(nproc)+1)) \
---no-access-log
-```
 
 
 ### Testing, Linting and Type-Checking commands:
-
 
 ```bash
 # run tests
@@ -80,10 +75,3 @@ uv run ruff check
 # run type checking
 uv run ty check
 ```
-
-
-## Future TODOs:
-- Extend configuration for Ruff and Ty
-- Add integration with Gunicorn
-- Implement Dockerfile using multistage build
-- 
